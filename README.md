@@ -18,7 +18,7 @@ A submersible thermometer and heater are used for controlling the water temperat
     <li><a href="#Building">Building</a></li>
   </ul>  
 
-<h2>Used Technologies</h2>
+<h2>Technologies Used</h2>
 <ul>
   <li>C/C++</li>
   <li>ESP32</li>
