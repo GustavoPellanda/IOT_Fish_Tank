@@ -1,6 +1,5 @@
 #include <pgmspace.h>
 
-
 const char PAGE_MAIN[] PROGMEM = R"=====(
 <!DOCTYPE html>
 <html>
@@ -149,12 +148,12 @@ const char PAGE_MAIN[] PROGMEM = R"=====(
         </style>
     </head>
 
-    <body onload="process()">
+    <body onload="fetchData()">
         <h1>Fish Tank Overview</h1>
         <h2>Monitoring</h2>
         <div class="container">
             <div class="bodytext">
-                <div class="conatainer-text">Temperature:</div>
+                <div class="container-text">Temperature:</div>
                 <div id="temp"></div>
                 <div class="unit">°C</div>
             </div>
@@ -167,21 +166,6 @@ const char PAGE_MAIN[] PROGMEM = R"=====(
                 <div>Luminosity:</div>
                 <div id="lum"></div>
                 <div class="unit">%</div>
-            </div>
-            <div class="bodytext">
-                <div>Pump 01:</div>
-                <div id="pump1"></div>
-                <div class="unit"></div>
-            </div>
-            <div class="bodytext">
-                <div>Pump 02:</div>
-                <div id="pump2"></div>
-                <div class="unit"></div>
-            </div>
-            <div class="bodytext">
-                <div>Pump 03:</div>
-                <div id="pump3"></div>
-                <div class="unit"></div>
             </div>
         </div>
         <h2>Control</h2>
@@ -206,21 +190,21 @@ const char PAGE_MAIN[] PROGMEM = R"=====(
                     <input type="checkbox" id="ctrlpump3" onclick="controlPump(3)">
                     <label for="ctrlpump3" class="checkmark"></label>
                 </div>
-            </div>        
+            </div>
         </div>
         <h2>Alerts</h2>
         <div class="container">
             <div class="bodytext">
                 <div>Temperature alert:</div>
-                <div id="alertTemp"></div>
+                <div id="alertTemp" class="alert"></div>
             </div>
             <div class="bodytext">
                 <div>Distance alert:</div>
-                <div id="alertDist"></div>
+                <div id="alertDist" class="alert"></div>
             </div>
             <div class="bodytext">
                 <div>Luminosity alert:</div>
-                <div id="alertLum"></div>
+                <div id="alertLum" class="alert"></div>
             </div>
         </div>
         <h2>Action Log</h2>
@@ -231,52 +215,59 @@ const char PAGE_MAIN[] PROGMEM = R"=====(
             </div>
         </div>
         <script>
-            function process() {
-                // TO DO: Code for processing data and updating UI
+            function fetchData() {
+                var xhttp = new XMLHttpRequest();
+                xhttp.onreadystatechange = function() {
+                    if (this.readyState === 4 && this.status === 200) {
+                        // Parse the XML response
+                        var xmlDoc = this.responseXML;
     
-                // Mockup data
-                var tempData = "25.5";
-                var distData = "80";
-                var lumData = "70";
-                var pump1Data = "ON";
-                var pump2Data = "OFF";
-                var pump3Data = "ON";
-                var alertTempData = "No alerts";
-                var alertDistData = "No alerts";
-                var alertLumData = "No alerts";
-                var logData = "pump1 ON at 10:30";
+                        // Extract sensor data from the XML
+                        var temperature = xmlDoc.getElementsByTagName("TEMP")[0].textContent;
+                        var waterLevel = xmlDoc.getElementsByTagName("DIST")[0].textContent;
+                        var luminosity = xmlDoc.getElementsByTagName("LUM")[0].textContent;
     
-                // Update UI
-                document.getElementById("temp").innerHTML = tempData;
-                document.getElementById("dist").innerHTML = distData;
-                document.getElementById("lum").innerHTML = lumData;
-                document.getElementById("pump1").innerHTML = pump1Data;
-                document.getElementById("pump2").innerHTML = pump2Data;
-                document.getElementById("pump3").innerHTML = pump3Data;
-                document.getElementById("alertTemp").innerHTML = alertTempData;
-                document.getElementById("alertDist").innerHTML = alertDistData;
-                document.getElementById("alertLum").innerHTML = alertLumData;
-                document.getElementById("log").innerHTML = logData;
+                        // Update the placeholders with the fetched data
+                        document.getElementById("temp").textContent = temperature;
+                        document.getElementById("dist").textContent = waterLevel;
+                        document.getElementById("lum").textContent = luminosity;
+                    }
+                };
+    
+                // Send a GET request to the ESP32's XML endpoint
+                xhttp.open("GET", "/xml", true);
+                xhttp.send();
             }
     
+            // Set an interval to periodically fetch and update data
+            setInterval(fetchData, 5000);
+    
+            // Define variables to store pump states
+            var pumpStates = {
+                pump1: false,
+                pump2: false,
+                pump3: false
+            };
+
+            // Function to update pump state when checkbox is clicked
             function controlPump(pumpId) {
-                // TO DO: Code for controlling pumps
-    
-                var pumpStatus = document.getElementById("ctrlpump" + pumpId).checked;
-                var logMsg = "";
-    
-                if (pumpStatus) {
-                    // Pump is turned on
-                    logMsg = "pump" + pumpId + " ON";
-                } else {
-                    // Pump is turned off
-                    logMsg = "pump" + pumpId + " OFF";
-                }
-    
-                // Update log
-                var logElement = document.getElementById("log");
-                logElement.innerHTML += "<br>" + logMsg;
+                var checkbox = document.getElementById("ctrlpump" + pumpId);
+                pumpStates["pump" + pumpId] = checkbox.checked;
+
+                // Send the updated pump state to the ESP32 immediately
+                sendPumpControl(pumpId, checkbox.checked);
             }
+
+            // Function to send pump control settings to ESP32
+            function sendPumpControl(pumpId, state) {
+                var jsonData = JSON.stringify({ pumpId: pumpId, state: state });
+                var xhttp = new XMLHttpRequest();
+                var endpointUrl = "/controlPump";
+                xhttp.open("POST", endpointUrl, true);
+                xhttp.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
+                xhttp.send(jsonData);
+            }
+
         </script>
     </body>
     
