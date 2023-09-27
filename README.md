@@ -15,7 +15,6 @@ A submersible thermometer and heater are used for controlling the water temperat
     <li><a href="#Code Explanation">Code Explanation</a></li>
     <li><a href="#Usage">Usage</a></li>
     <li><a href="#Web Inerface">Web Inerface</a></li>
-    <li><a href="#Building">Building</a></li>
   </ul>  
 
 <h2>Technologies Used</h2>
@@ -66,6 +65,3 @@ The sendXML function handles the /xml route and sends the XML data to the client
 <h2>Web Interface</h2>
   <p>This is the web interface, from which you can monitor and control the fish tanks:</p>
   <img src="https://user-images.githubusercontent.com/129123498/233806760-cb87e62e-f622-40d8-92cc-4343f308a9ed.png" alt="Gráfico sendo exibido na web">
-  
-<h2>Building</h2> 
- <p>🚧 22/04/2023 - At the moment, the functions that communicate between the Web Interface and the controller are still under development.</p>
