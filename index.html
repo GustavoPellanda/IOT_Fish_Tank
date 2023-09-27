@@ -227,33 +227,33 @@
             </div>
         </div>
         <script>
-            function process() {
-                // TO DO: Code for processing data and updating UI
-    
-                // Mockup data
-                var tempData = "25.5";
-                var distData = "80";
-                var lumData = "70";
-                var pump1Data = "ON";
-                var pump2Data = "OFF";
-                var pump3Data = "ON";
-                var alertTempData = "No alerts";
-                var alertDistData = "No alerts";
-                var alertLumData = "No alerts";
-                var logData = "pump1 ON at 10:30";
-    
-                // Update UI
-                document.getElementById("temp").innerHTML = tempData;
-                document.getElementById("dist").innerHTML = distData;
-                document.getElementById("lum").innerHTML = lumData;
-                document.getElementById("pump1").innerHTML = pump1Data;
-                document.getElementById("pump2").innerHTML = pump2Data;
-                document.getElementById("pump3").innerHTML = pump3Data;
-                document.getElementById("alertTemp").innerHTML = alertTempData;
-                document.getElementById("alertDist").innerHTML = alertDistData;
-                document.getElementById("alertLum").innerHTML = alertLumData;
-                document.getElementById("log").innerHTML = logData;
+            fetchData();
+
+            function fetchData() {
+                var xhttp = new XMLHttpRequest();
+                xhttp.onreadystatechange = function() {
+                if (this.readyState === 4 && this.status === 200) {
+                    // Parse the XML response
+                    var xmlDoc = this.responseXML;
+                    
+                    // Extract sensor data from the XML
+                    var temperature = xmlDoc.getElementsByTagName("TEMP")[0].textContent;
+                    var waterLevel = xmlDoc.getElementsByTagName("DIST")[0].textContent;
+                    var luminosity = xmlDoc.getElementsByTagName("LUM")[0].textContent;
+
+                    // Update the placeholders with the fetched data
+                    document.getElementById("temperature").innerHTML = "Temperature: " + temperature + " °C";
+                    document.getElementById("waterLevel").innerHTML = "Water Level: " + waterLevel + " %";
+                    document.getElementById("luminosity").innerHTML = "Luminosity: " + luminosity + " %";
+                }
+                };
+                
+                // Send a GET request to the ESP32's XML endpoint
+                xhttp.open("GET", "/xml", true);
+                xhttp.send();
             }
+            // Set an interval to periodically fetch and update data 
+            setInterval(fetchData, 5000);
     
             function controlPump(pumpId) {
                 // TO DO: Code for controlling pumps
