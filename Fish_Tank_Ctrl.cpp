@@ -4,6 +4,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include "html.h"
+#include <ArduinoJson.h> 
 
 // Internet and password
 #define LOCAL_SSID "TEST"
@@ -155,6 +156,7 @@ void setup() {
 
   server.on("/", SendWebsite);
   server.on("/xml", sendXML);
+   server.on("/controlPump", HTTP_POST, handlePumpControl);
 
   server.begin();
 }
@@ -214,6 +216,50 @@ float Ultrasonic() {
 int ldrValue() {
   // reads the value on input (between 0 and 4095)
   return analogRead(LDR);
+}
+
+// Function to handle pump control for a specific pump
+void handlePumpControl() {
+    if (server.hasArg("plain")) {
+        String jsonData = server.arg("plain");
+
+        // Create a JSON object to parse the received data
+        DynamicJsonDocument jsonDoc(1024);
+        DeserializationError error = deserializeJson(jsonDoc, jsonData);
+
+        if (error) {
+            server.send(400, "text/plain", "Invalid JSON data");
+            return;
+        }
+
+        int pumpId = jsonDoc["pumpId"];
+        bool state = jsonDoc["state"];
+
+        // Implement your pump control logic here based on pumpId and state
+        if (pumpId == 1) {
+            if (state) {
+                digitalWrite(pump, HIGH); // Turn on pump 1
+            } else {
+                digitalWrite(pump, LOW); // Turn off pump 1
+            }
+        } else if (pumpId == 2) {
+            if (state) {
+                digitalWrite(pump2, HIGH); // Turn on pump 2
+            } else {
+                digitalWrite(pump2, LOW); // Turn off pump 2
+            }
+        } else if (pumpId == 3) {
+            // Implement control for pump 3 here if needed
+        } else {
+            server.send(400, "text/plain", "Invalid pump ID");
+            return;
+        }
+
+        // Send a response back to the HTML page
+        server.send(200, "text/plain", "Pump control settings received and applied.");
+    } else {
+        server.send(400, "text/plain", "Missing JSON data");
+    }
 }
 
 // Function to activate water pump with luminosity
@@ -333,15 +379,15 @@ void SendWebsite() {
 void sendXML() {
   strcpy(XML, "<?xml version = '1.0'?>\n<Data>\n");
 
-  //Sends temperature
+  // Send temperature
   sprintf(buf, "<TEMP>%.2f</TEMP>\n", temperature);
   strcat(XML, buf);
 
-  //Sends distance
+  // Send water level
   sprintf(buf, "<DIST>%.2f</DIST>\n", distancePercentage);
   strcat(XML, buf);
 
-  //Sends luminosity
+  // Send luminosity
   sprintf(buf, "<LUM>%.2f</LUM>\n", luminosistyPercentage);
   strcat(XML, buf);
 
