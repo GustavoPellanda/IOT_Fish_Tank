@@ -9,6 +9,11 @@ The firmware integrates environmental sensing, actuator control, and a lightweig
 The system was designed to remain lightweight and easy to deploy while still following structured embedded software design practices.
 
 ---
+## Web Interface
+
+<img width="1168" height="1079" alt="Captura de tela 2026-05-30 055340" src="https://github.com/user-attachments/assets/e6870261-3775-492e-af8a-d4981fb965b8" />
+
+---
 
 ## Features
 
