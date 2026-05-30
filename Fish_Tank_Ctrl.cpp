@@ -1,406 +1,370 @@
 #include <Arduino.h>
-#include <OneWire.h>
-#include <DallasTemperature.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
+#include <ArduinoJson.h>
+
 #include "html.h"
-#include <ArduinoJson.h> 
 
-// Internet and password
-#define LOCAL_SSID "TEST"
-#define LOCAL_PASS "12345678"
-
-// Client will connect 
-#define AP_SSID "TEST"
-#define AP_PASS "12345678"
-
-// Define sound speed in cm/uS
-#define SOUND_SPEED 0.034
-
-// Max/Min temperature to activate the water pump
-#define TEMPERATURE_MAX 26.0
-#define TEMPERATURE_MIN 25.0
-
-// Max/Min height to activate the water pump
-// Limits the water maximum water height to 100% and the minimum to 69%.
-#define DISTANCE_MAX 7.0
-#define DISTANCE_MED 5.5
-#define DISTANCE_MIN 4.0
-
-// Water pump activation through luminosity
-// Water will flow from 52% to 79% luminosity
-#define LUMINOSITY_THRESHOLD_MIN 1140
-#define LUMINOSITY_THRESHOLD_MAX 1300
-
-// Period of each sensor
-#define PER_TEMPERATURE 3000
-#define PER_LDR 3000
-#define PER_DIST 500
-
+// Network configuration:
 #define USE_INTRANET
+static constexpr const char* LOCAL_SSID = "TEST";
+static constexpr const char* LOCAL_PASS = "12345678";
+static constexpr const char* AP_SSID = "TEST";
+static constexpr const char* AP_PASS = "12345678";
 
-// Send information to the web server
-char XML[2048];
-char buf[32];
-
-IPAddress Actual_IP;
-
-IPAddress PageIP(192, 168, 1, 1);
-IPAddress gateway(192, 168, 1, 1);
-IPAddress subnet(255, 255, 255, 0);
-IPAddress ip;
-
-// Time
-int time_temperature = millis() + PER_TEMPERATURE;
-int time_ldr = millis() + PER_LDR;
-int time_dist = millis() + PER_DIST;
-
-// GPIO where the DS18B20 is connected 
-const int oneWireBus = 32;     
-
-int counter_in = 0;
-int counter_out = 0;
-int counter_stop = 0;
-
-// GPIO where the LDR is connected
-const int LDR = 35;
-
-// GPIO where the water pump is activated
-// pump - fills
-// pump2 - empties 
-const int pump = 18;
-const int pump2 = 19;
-
-// GPIO where the heater is activated
-const int heater = 21;
-
-// GPIOS where the HC-SR04 is connected 
-const int trigPin = 5;
-const int echoPin = 33;
-
-long duration;
-float distanceCm;
-float distance;
-float temperature;
-int luminosity;
-float distancePercentage;
-float luminosistyPercentage;
-
-// flags
-bool flag_temp_on = false;
-bool flag_ldr_on = false;
-bool flag_dist_pump1_on = false;
-bool flag_dist_pump2_on = false;
-bool flag_dist_isMoreImportant = true;
-bool flag_all_off = true; // all pumps off
-bool pump1_rele = false;
-bool pump2_rele = false;
-bool heater_rele = false;
-
-// Setup an oneWire instance to communicate with any OneWire devices
-OneWire oneWire(oneWireBus);
-
-// Passes our oneWire reference to Dallas temperature sensor 
-DallasTemperature sensors(&oneWire);
-
-// Creates web server object that listens on port 80
-WebServer server(80); 
-
-// Functions
-float Temperature();
-void waterPumpTemperature(float temperature);
-float Ultrasonic();
-void waterPumpUltrasonic(float distance);
-int ldrValue();
-void waterPumpLDR(int valueLDR);
-void PumpControl();
-void SendWebsite();
-void sendXML();
-float lumPorcentage(int luminosity);
-float distPorcentage(float dist);
-
-
-void setup() {
-
-  // Starts the Serial Monitor
-  Serial.begin(115200);
-  // Starts the DS18B20 sensor
-  sensors.begin();
-  // Set GPIOs as output or input
-  pinMode(trigPin, OUTPUT);
-  pinMode(echoPin, INPUT);
-  pinMode(pump, OUTPUT);
-  pinMode(pump2, OUTPUT);
-  pinMode(heater, OUTPUT);
-
-  #ifdef USE_INTRANET
-    WiFi.begin(LOCAL_SSID, LOCAL_PASS);
-    while (WiFi.waitForConnectResult() != WL_CONNECTED) {
-      delay(500);
-      Serial.print(WiFi.waitForConnectResult());
-      Serial.print(".");
-      Serial.print(WiFi.status());
-    }
-    Serial.print("IP address: "); Serial.println(WiFi.localIP());
-    Actual_IP = WiFi.localIP();
-  #endif
-
-  #ifndef USE_INTRANET
-    WiFi.softAP(AP_SSID, AP_PASS);
-    delay(100);
-    WiFi.softAPConfig(PageIP, gateway, subnet);
-    delay(100);
-    Actual_IP = WiFi.softAPIP();
-    Serial.print("IP address: "); Serial.println(Actual_IP);
-  #endif
-
-  server.on("/", SendWebsite);
-  server.on("/xml", sendXML);
-   server.on("/controlPump", HTTP_POST, handlePumpControl);
-
-  server.begin();
+// Hardware pins:
+namespace Pin
+{
+  constexpr uint8_t ONE_WIRE = 32;
+  constexpr uint8_t LDR = 35;
+  constexpr uint8_t PUMP_IN = 18;
+  constexpr uint8_t PUMP_OUT = 19;
+  constexpr uint8_t HEATER = 21;
+  constexpr uint8_t TRIG = 5;
+  constexpr uint8_t ECHO = 33;
 }
 
-void loop() {
-  // Temperature sensor
-  if(millis() >= time_temperature) {
-    time_temperature = millis() + PER_TEMPERATURE;
-    temperature = Temperature();
-    waterPumpTemperature(temperature);
-  }
+// System thresholds and constants:
+static constexpr float SOUND_SPEED_CM_US = 0.034f;
 
-  // Luminosity Sensor 
-  if(millis() >= time_ldr) {
-    time_ldr = millis() + PER_LDR;
-    luminosity = ldrValue();
-    luminosistyPercentage = lumPorcentage(luminosity);
-    waterPumpLDR(luminosity);
-  }
-  
-  // Level Sensor
-  if(millis() >= time_dist) {
-    time_dist = millis() + PER_DIST;
-    distance = Ultrasonic();
-    distancePercentage = distPorcentage(distance);
-    waterPumpUltrasonic(distance);
-  }
+static constexpr float TEMP_MAX = 26.0f;
+static constexpr float TEMP_MIN = 25.0f;
 
-  PumpControl();
-  server.handleClient();
+static constexpr float DIST_MAX = 7.0f;
+static constexpr float DIST_MIN = 4.0f;
+
+// Distance-to-percent reference points (sensor distance at empty and full tank):
+static constexpr float DIST_SENSOR_EMPTY = 13.8f;
+static constexpr float DIST_SENSOR_RANGE = 9.8f;
+
+static constexpr int LDR_MIN = 1140;
+static constexpr int LDR_MAX = 1300;
+
+// LDR ADC full-scale reference for percent conversion:
+static constexpr float LDR_FULL_SCALE = 1900.0f;
+
+// Task periods (in milliseconds):
+static constexpr uint32_t TEMP_PERIOD_MS = 3000;
+static constexpr uint32_t LDR_PERIOD_MS  = 3000;
+static constexpr uint32_t DIST_PERIOD_MS = 500;
+
+// Pump actuator states:
+enum class PumpMode {
+  OFF,
+  FILL,
+  DRAIN
+};
+
+// Variables mesured by sensors:
+struct SensorData {
+  float temperatureC = 0.0f;
+  float distanceCm = 0.0f;
+  float distancePercent = 0.0f;
+  int luminosityRaw = 0;
+  float luminosityPercent = 0.0f;
+  bool distanceValid = false;
+};
+
+// System state variables:
+struct SystemState {
+  PumpMode pumpMode = PumpMode::OFF;
+  bool heaterEnabled = false;
+  bool tempDemand = false;
+  bool ldrDemand = false;
+  bool levelHigh = false;
+  bool levelLow = false;
+  bool manualOverride = false;
+};
+
+// Global objects:
+OneWire oneWire(Pin::ONE_WIRE);
+DallasTemperature tempSensor(&oneWire);
+WebServer server(80);
+SensorData sensors;
+SystemState state;
+
+// Timestamps for periodic tasks:
+uint32_t nextTempRead = 0;
+uint32_t nextLdrRead  = 0;
+uint32_t nextDistRead = 0;
+
+// Helper function to check if a periodic task should run based on its timestamp and period:
+static bool periodicTask(uint32_t& timestamp, uint32_t period) {
+  const uint32_t now = millis();
+
+  if ((int32_t)(now - timestamp) >= 0) {
+    timestamp = now + period;
+    return true;
+  }
+  return false;
 }
 
-float Temperature() {
-  sensors.requestTemperatures(); 
-  return sensors.getTempCByIndex(0);
+// Sets the pump mode and updates the corresponding output pins:
+static void setPumpMode(PumpMode mode) {
+  state.pumpMode = mode;
+
+  switch (mode) {
+    case PumpMode::OFF:
+      digitalWrite(Pin::PUMP_IN, HIGH);
+      digitalWrite(Pin::PUMP_OUT, HIGH);
+      break;
+
+    case PumpMode::FILL:
+      digitalWrite(Pin::PUMP_IN, LOW);
+      digitalWrite(Pin::PUMP_OUT, HIGH);
+      break;
+
+    case PumpMode::DRAIN:
+      digitalWrite(Pin::PUMP_IN, HIGH);
+      digitalWrite(Pin::PUMP_OUT, LOW);
+      break;
+  }
 }
 
-float Ultrasonic() {
-   // Clears the trigPin
-  digitalWrite(trigPin, LOW);
+// Sets the heater state and updates the corresponding output pin:
+static void setHeater(bool enabled) {
+  state.heaterEnabled = enabled;
+  digitalWrite(Pin::HEATER, enabled ? LOW : HIGH);
+}
+
+// Sensor reading functions:
+static float readTemperature() {
+  tempSensor.requestTemperatures();
+  return tempSensor.getTempCByIndex(0);
+}
+
+static float readDistanceCm() {
+  digitalWrite(Pin::TRIG, LOW);
   delayMicroseconds(2);
-  // Sets the trigPin on HIGH state for 10 micro seconds
-  digitalWrite(trigPin, HIGH);
+  digitalWrite(Pin::TRIG, HIGH);
   delayMicroseconds(10);
-  digitalWrite(trigPin, LOW);
-  
-  // Reads the echoPin, returns the sound wave travel time in microseconds
-  duration = pulseIn(echoPin, HIGH);
-  
-  // Calculate the distance
-  distanceCm = duration * SOUND_SPEED/2;
+  digitalWrite(Pin::TRIG, LOW);
+  const long duration = pulseIn(Pin::ECHO, HIGH, 30000);
 
-  return distanceCm;
+  // Returns -1 as a sentinel value if the sensor timed out:
+  if (duration == 0) return -1.0f;
+
+  return (duration * SOUND_SPEED_CM_US) * 0.5f;
 }
 
-// Function sensor LDR
-int ldrValue() {
-  // reads the value on input (between 0 and 4095)
-  return analogRead(LDR);
+static int readLuminosity() {
+  return analogRead(Pin::LDR);
 }
 
-// Function to handle pump control for a specific pump
-void handlePumpControl() {
-    if (server.hasArg("plain")) {
-        String jsonData = server.arg("plain");
-
-        // Create a JSON object to parse the received data
-        DynamicJsonDocument jsonDoc(1024);
-        DeserializationError error = deserializeJson(jsonDoc, jsonData);
-
-        if (error) {
-            server.send(400, "text/plain", "Invalid JSON data");
-            return;
-        }
-
-        int pumpId = jsonDoc["pumpId"];
-        bool state = jsonDoc["state"];
-
-        // Implement your pump control logic here based on pumpId and state
-        if (pumpId == 1) {
-            if (state) {
-                digitalWrite(pump, HIGH); // Turn on pump 1
-            } else {
-                digitalWrite(pump, LOW); // Turn off pump 1
-            }
-        } else if (pumpId == 2) {
-            if (state) {
-                digitalWrite(pump2, HIGH); // Turn on pump 2
-            } else {
-                digitalWrite(pump2, LOW); // Turn off pump 2
-            }
-        } else if (pumpId == 3) {
-            // Implement control for pump 3 here if needed
-        } else {
-            server.send(400, "text/plain", "Invalid pump ID");
-            return;
-        }
-
-        // Send a response back to the HTML page
-        server.send(200, "text/plain", "Pump control settings received and applied.");
-    } else {
-        server.send(400, "text/plain", "Missing JSON data");
-    }
+// Conversion functions:
+static float distanceToPercent(float distanceCm) {
+  return ((DIST_SENSOR_EMPTY - distanceCm) * 100.0f) / DIST_SENSOR_RANGE;
 }
 
-// Function to activate water pump with luminosity
-void waterPumpLDR(int valueLDR) {
-  if(valueLDR < LUMINOSITY_THRESHOLD_MIN) {
-    flag_ldr_on = true;
+static float luminosityToPercent(int raw) {
+  return (raw * 100.0f) / LDR_FULL_SCALE;
+}
+
+// Updates tempDemand based on temperature sensor reading and thresholds:
+static void updateTemperatureLogic() {
+  if (sensors.temperatureC > TEMP_MAX) {
+    state.tempDemand = true;
+    setHeater(false);
   }
-  else if(valueLDR > LUMINOSITY_THRESHOLD_MAX) {
-    flag_ldr_on = false;
-  }
-}
-
-// Function to activate water pump with temperature
-void waterPumpTemperature(float temperature) {
-  if(temperature > TEMPERATURE_MAX) {
-    flag_temp_on = true;
-    heater_rele = false;
-  }
-  else if(temperature < TEMPERATURE_MIN) {
-    digitalWrite(heater, LOW);
-    heater_rele = true;
+  else if (sensors.temperatureC < TEMP_MIN) {
+    state.tempDemand = false;
+    setHeater(true);
   }
   else {
-    digitalWrite(heater, HIGH);
-    flag_temp_on = false;
-    heater_rele = false;
+    state.tempDemand = false;
+    setHeater(false);
   }
 }
 
-// Function to activate water pump with level
-void waterPumpUltrasonic(float distance) {
-  if(distance > DISTANCE_MAX) {
-    counter_in++;
-    counter_out = 0;
-    counter_stop = 0;
-    digitalWrite(pump, LOW);
-    digitalWrite(pump2, HIGH);
-  }
-  else if(distance < DISTANCE_MIN ) {
-    counter_out++;
-    counter_in = 0;
-    counter_stop = 0;
-  }
-  else if(distance > DISTANCE_MIN && distance < DISTANCE_MAX) {
-    counter_stop++;
-    counter_in = 0;
-    counter_out = 0;
-  }
-  if(counter_in >= 3) {
-    flag_dist_isMoreImportant = true;
-    flag_dist_pump1_on = true;
-    flag_dist_pump2_on = false;
-    counter_in = 0;
-  }
-  else if(counter_out >= 3) {
-    flag_dist_isMoreImportant = true;
-    flag_dist_pump1_on = false;
-    flag_dist_pump2_on = true;
-    counter_out = 0;
-  }
-  else if(counter_stop >= 3) {
-    flag_dist_isMoreImportant = false;
-    flag_dist_pump1_on = false;
-    flag_dist_pump2_on = false;
-    counter_stop = 0;
-  }
+// Updates ldrDemand based on luminosity sensor reading and thresholds:
+static void updateLuminosityLogic() {
+  if (sensors.luminosityRaw < LDR_MIN) state.ldrDemand = true;
+  else if (sensors.luminosityRaw > LDR_MAX) state.ldrDemand = false;
 }
 
-void PumpControl() {
-  if(flag_dist_isMoreImportant) {
-    if(flag_dist_pump1_on) {
-      digitalWrite(pump, LOW);
-      digitalWrite(pump2, HIGH);
-      pump1_rele = true;
-      pump2_rele = false;
-    }
-    else if(flag_dist_pump2_on){
-      digitalWrite(pump, HIGH);
-      digitalWrite(pump2, LOW);
-      pump2_rele = true;
-      pump1_rele = false;
-    }
-  }
-  else if(flag_temp_on){
-	digitalWrite(pump, LOW);
-    digitalWrite(pump2, HIGH);
-    pump1_rele = true;
-    pump2_rele = false;
-  }
-  else if(flag_ldr_on && flag_all_off){
-    digitalWrite(pump, HIGH);
-    digitalWrite(pump2, LOW);
-    pump1_rele = false;
-    pump2_rele = true;
-  }
-  else if(!flag_ldr_on) { //shuts the pumps off when the water is clear
-    digitalWrite(pump, HIGH);
-    digitalWrite(pump2, HIGH);
-    pump1_rele = false;
-    pump2_rele = false;
-	flag_all_off = true;
-  }
+// Updates levelHigh and levelLow based on distance sensor reading and thresholds:
+static void updateLevelLogic() {
+  // Skips level update if the distance reading is invalid (sensor timeout):
+  if (!sensors.distanceValid) return;
+
+  state.levelHigh = sensors.distanceCm > DIST_MAX;
+  state.levelLow = sensors.distanceCm < DIST_MIN;
 }
 
-float lumPorcentage(int luminosity) {
-  return (luminosity * 100.) / 1900;
+// Updates pump mode based on current system state and priorities:
+static void updateActuators() {
+  /*
+    Priority:
+    1. Water level protection
+    2. Temperature control
+    3. Luminosity control
+  */
+
+  // Skips automation if a manual override is active:
+  if (state.manualOverride) return;
+
+  if (state.levelHigh){
+    setPumpMode(PumpMode::DRAIN);
+    return;
+  }
+  if (state.levelLow){
+    setPumpMode(PumpMode::FILL);
+    return;
+  }
+  if (state.tempDemand){
+    setPumpMode(PumpMode::DRAIN);
+    return;
+  }
+  if (state.ldrDemand){
+    setPumpMode(PumpMode::FILL);
+    return;
+  }
+  setPumpMode(PumpMode::OFF);
 }
 
-float distPorcentage(float dist) {
-  return ((13.8 - dist) * 100) / 9.8;
-}
-
-void SendWebsite() {
+// HTTP request handlers:
+static void handleRoot() {
   server.send(200, "text/html", PAGE_MAIN);
 }
 
-void sendXML() {
-  strcpy(XML, "<?xml version = '1.0'?>\n<Data>\n");
+static void handleXml() {
+  char xml[512];
 
-  // Send temperature
-  sprintf(buf, "<TEMP>%.2f</TEMP>\n", temperature);
-  strcat(XML, buf);
+  snprintf(
+    xml,
+    sizeof(xml),
+    "<?xml version='1.0'?>"
+    "<Data>"
+      "<TEMP>%.2f</TEMP>"
+      "<DIST>%.2f</DIST>"
+      "<LUM>%.2f</LUM>"
+      "<PUMP>%d</PUMP>"
+      "<HEATER>%d</HEATER>"
+    "</Data>",
 
-  // Send water level
-  sprintf(buf, "<DIST>%.2f</DIST>\n", distancePercentage);
-  strcat(XML, buf);
+    sensors.temperatureC,
+    sensors.distancePercent,
+    sensors.luminosityPercent,
+    static_cast<int>(state.pumpMode),
+    state.heaterEnabled
+  );
 
-  // Send luminosity
-  sprintf(buf, "<LUM>%.2f</LUM>\n", luminosistyPercentage);
-  strcat(XML, buf);
+  server.send(200, "text/xml", xml);
+}
 
-  sprintf(buf, "<PUMP1>%d</PUMP1>\n", pump1_rele);
-  strcat(XML, buf);
+// Handles POST requests to control the pump:
+static void handlePumpControl() {
+  if (!server.hasArg("plain")) {
+    server.send(400, "text/plain", "Missing body");
+    return;
+  }
 
-  sprintf(buf, "<PUMP2>%d</PUMP2>\n", pump2_rele);
-  strcat(XML, buf);
+  StaticJsonDocument<256> doc;
+  const auto error = deserializeJson(doc, server.arg("plain"));
 
-  sprintf(buf, "<HEATER>%d</HEATER>\n", heater_rele);
-  strcat(XML, buf);
+  if (error) {
+    server.send(400, "text/plain", "Invalid JSON");
+    return;
+  }
 
-  strcat(XML, "</Data>\n");
+  const int pumpId = doc["pumpId"];
+  const bool enabled = doc["state"];
 
-  server.send(200, "text/xml", XML);
+  // Activates manual override so automation does not immediately cancel the command:
+  state.manualOverride = enabled;
+
+  // Sets the pump mode based on the Id and state recieved in the request:
+  if (pumpId == 1) setPumpMode(enabled ? PumpMode::FILL : PumpMode::OFF);
+  else if (pumpId == 2) setPumpMode(enabled ? PumpMode::DRAIN : PumpMode::OFF);
+  
+  else {
+    server.send(400, "text/plain", "Invalid pump");
+    return;
+  }
+  
+  server.send(200, "text/plain", "OK");
+}
+
+// Initializes WiFi connection:
+static void initializeWiFi() {
+#ifdef USE_INTRANET
+
+  WiFi.begin(LOCAL_SSID, LOCAL_PASS);
+
+  while (WiFi.waitForConnectResult() != WL_CONNECTED) {
+    delay(500);
+    Serial.println("WiFi connection failed");
+  }
+
+  Serial.print("IP: ");
+  Serial.println(WiFi.localIP());
+
+#else
+
+  WiFi.softAP(AP_SSID, AP_PASS);
+  Serial.print("AP IP: ");
+  Serial.println(WiFi.softAPIP());
+
+#endif
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  pinMode(Pin::TRIG, OUTPUT);
+  pinMode(Pin::ECHO, INPUT);
+  pinMode(Pin::PUMP_IN, OUTPUT);
+  pinMode(Pin::PUMP_OUT, OUTPUT);
+  pinMode(Pin::HEATER, OUTPUT);
+
+  setPumpMode(PumpMode::OFF);
+  setHeater(false);
+
+  tempSensor.begin();
+  initializeWiFi();
+
+  server.on("/", handleRoot);
+  server.on("/xml", handleXml);
+  server.on("/controlPump", HTTP_POST, handlePumpControl);
+  server.begin();
+
+  nextTempRead = millis();
+  nextLdrRead  = millis();
+  nextDistRead = millis();
+
+  Serial.println("System initialized");
+}
+
+void loop() {
+
+  // Periodically reads sensors and updates system state:
+  if (periodicTask(nextTempRead, TEMP_PERIOD_MS)) {
+    sensors.temperatureC = readTemperature();
+    updateTemperatureLogic();
+  }
+
+  // Reads luminosity sensor and updates ldrDemand every LDR_PERIOD_MS:
+  if (periodicTask(nextLdrRead, LDR_PERIOD_MS)) {
+    sensors.luminosityRaw = readLuminosity();
+    sensors.luminosityPercent = luminosityToPercent(sensors.luminosityRaw);
+    updateLuminosityLogic();
+  }
+
+  // Reads distance sensor and updates levelHigh/levelLow every DIST_PERIOD_MS:
+  if (periodicTask(nextDistRead, DIST_PERIOD_MS)) {
+    const float raw = readDistanceCm();
+    sensors.distanceValid = (raw > 0.0f);
+
+    if (sensors.distanceValid) {
+      sensors.distanceCm = raw;
+      sensors.distancePercent = distanceToPercent(raw);
+    }
+
+    updateLevelLogic();
+  }
+
+  updateActuators();
+  server.handleClient();
 }

@@ -1,67 +1,142 @@
-<h1 align="center"> IOT Fish Tank Control and Monitoring </h1>
+# IoT Fish Tank Control and Monitoring
 
-<p> The IOT Fish Tank Control and Monitoring project is a system designed to automate fish tank cleaning and maintenance. It utilizes an ESP32 microcontroller to manage three water pumps responsible for transferring water between three tanks: a breeding tank, a clean water tank, and a tank for dirty water.
+## Overview
 
-A luminosity sensor is used to detect the clarity of the water at the bottom of the tank. If the water becomes too cloudy, the system automatically transfers it to the dirty water tank for cleaning, and replaces it with clean water from the clean water tank.
+This project implements an embedded monitoring and control system for automated fish tank maintenance using an ESP32 microcontroller. The system continuously monitors water conditions and automatically controls pumps and heating elements to maintain a stable environment for the fish.
 
-An ultrasonic sensor is used to monitor the water level in the tank, ensuring that the water remains at a consistent level, and preventing it from overflowing or becoming too low.
+The firmware integrates environmental sensing, actuator control, and a lightweight web interface into a single embedded application. Sensor data is collected periodically and processed by a deterministic control loop responsible for regulating water level, temperature, and water quality.
 
-A submersible thermometer and heater are used for controlling the water temperature, ensuring that the fish are kept in a healthy and comfortable environment.</p>
-<p></p>
+The system was designed to remain lightweight and easy to deploy while still following structured embedded software design practices.
 
-<h2>Content</h2>
-  <ul>
-    <li><a href="#Used Technologies">Used Technologies</a></li>
-    <li><a href="#Code Explanation">Code Explanation</a></li>
-    <li><a href="#Usage">Usage</a></li>
-    <li><a href="#Web Inerface">Web Inerface</a></li>
-  </ul>  
+---
 
-<h2>Technologies Used</h2>
-<ul>
-  <li>C/C++</li>
-  <li>ESP32</li>
-  <li>HTML & CSS</li>
-  <li>Javascript</li>
-  <li>Arduino.h</li>
-  <li>OneWire.h</li>
-  <li>DallasTemperature.h</li>
-  <li>WiFi.h</li>
-  <li>WebServer.h</li>
-</ul>
+## Features
 
-<h2>Code Explanation</h2>
-   <p>Fish_Tank_Ctrl is an Arduino code that reads temperature, luminosity, and distance sensors to control a water pump, a heater, and two solenoid valves. The code also creates a web server to display the sensor readings and control the system remotely.
+- Real-time monitoring through a web dashboard
+- Automatic water level regulation
+- Automatic temperature control
+- Water replacement based on luminosity/turbidity conditions
+- Remote actuator control through HTTP requests
+- Wi-Fi station mode or ESP32 access point mode
+- Lightweight single-file embedded firmware architecture
 
-The code starts by including the OneWire, DallasTemperature, WiFi, and WebServer libraries and defining the network credentials for connecting to an existing network or creating a new access point. Next, the sound speed, maximum and minimum temperature, distance, and luminosity thresholds constants are created, as well as the periods for reading each sensor.
+---
 
-The variables created are time counters for each sensor and the flags that control the state of the system. It also sets the pin modes for the sensors, the water pump, the heater, and the solenoid valves.
+## System Architecture
 
-The setup function initializes the Serial Monitor, starts the temperature sensor, and connects to the network or creates an access point. It also sets up the web server and defines the handlers for the root and /xml routes.
+The project controls water circulation between three tanks:
 
-The loop function reads the temperature sensor, the luminosity sensor, and the distance sensor at their respective periods. It then updates the flags that control the state of the system based on the sensor readings. Finally, it calls the PumpControl function, which updates the state of the system by turning on or off the water pump, the heater, and the solenoid valves.
+1. Main fish tank
+2. Clean water tank
+3. Dirty water tank
 
-The Temperature function uses the DallasTemperature library to read the temperature from a DS18B20 sensor. The function requests the temperature and returns it as a float value.
+The ESP32 reads environmental data from multiple sensors and decides when to activate the actuators according to predefined thresholds and priorities.
 
-The waterPumpTemperature function checks if the temperature is within the allowed range and updates the flag for the water pump accordingly.
+### Sensor Inputs
 
-The Ultrasonic function uses the HC-SR04 ultrasonic sensor to measure the distance to the water level. The function calculates the distance and returns it as a float value.
+| Sensor   | Function                              |
+|----------|---------------------------------------|
+| DS18B20  | Water temperature measurement         |
+| HC-SR04  | Water level measurement               |
+| LDR      | Water luminosity / turbidity estimation |
 
-The waterPumpUltrasonic function checks if the water level is within the allowed range and updates the flags for the solenoid valves accordingly.
+### Controlled Devices
 
-The ldrValue function reads the value from an LDR sensor and returns it as an int value.
+| Device              | Function                          |
+|---------------------|-----------------------------------|
+| Water Pump (Fill)   | Adds clean water to the tank      |
+| Water Pump (Drain)  | Removes dirty water               |
+| Heater              | Maintains water temperature       |
 
-The waterPumpLDR function checks if the luminosity is within the allowed range and updates the flag for the solenoid valves accordingly.
+---
 
-The PumpControl function updates the state of the system based on the flags for the sensors and the solenoid valves. It turns on or off the water pump, the heater, and the solenoid valves as needed.
+## Control Logic
 
-The SendWebsite function handles the root route and sends the HTML page to the client.
+The firmware operates using periodic non-blocking tasks. Each sensor is sampled at a predefined interval and the system updates its internal state accordingly.
 
-The sendXML function handles the /xml route and sends the XML data to the client.</p>
+The actuator control logic follows a priority hierarchy:
 
-<h2>Usage</h2>
-   <p>The .cpp and the .h files must be downloaded to the ESP32. The html.h is where the HTML code will be contained.</p>
+1. Water level protection
+2. Temperature regulation
+3. Luminosity-based cleaning
 
-<h2>Web Interface</h2>
-  <p>This is the web interface, from which you can monitor and control the fish tanks:</p>
-  <img src="https://user-images.githubusercontent.com/129123498/233806760-cb87e62e-f622-40d8-92cc-4343f308a9ed.png" alt="Gráfico sendo exibido na web">
+This prevents conflicting actuator states and ensures deterministic system behavior.
+
+### Water Level Regulation
+
+The ultrasonic sensor continuously measures the distance between the sensor and the water surface. If the level becomes too high or too low, the system automatically activates the appropriate pump.
+
+### Temperature Regulation
+
+The DS18B20 temperature sensor monitors the water temperature. If the temperature falls below the configured threshold, the heater is activated. If the temperature exceeds the upper threshold, the system can trigger water circulation for cooling.
+
+### Water Quality Monitoring
+
+An LDR sensor is used as a simple approximation of water clarity. When luminosity values indicate excessive turbidity, the system drains dirty water and replaces it with clean water.
+
+---
+
+## Web Interface
+
+The ESP32 hosts a lightweight embedded web server that provides:
+
+- Real-time telemetry visualization
+- Sensor monitoring
+- Pump state visualization
+- Remote actuator control
+- System event feedback
+
+The interface is implemented using embedded HTML, CSS, and JavaScript stored directly in program memory.
+
+---
+
+## Technologies Used
+
+### Hardware
+
+- ESP32
+- DS18B20 temperature sensor
+- HC-SR04 ultrasonic sensor
+- LDR luminosity sensor
+- Relay modules
+- Water pumps
+- Aquarium heater
+
+### Libraries
+
+- `Arduino.h`
+- `WiFi.h`
+- `WebServer.h`
+- `OneWire.h`
+- `DallasTemperature.h`
+- `ArduinoJson.h`
+
+---
+
+## Usage
+
+### 1. Configure Wi-Fi
+
+Edit the network credentials in the source code:
+
+```cpp
+#define LOCAL_SSID "YOUR_WIFI"
+#define LOCAL_PASS "YOUR_PASSWORD"
+```
+
+Alternatively, the ESP32 can operate in Access Point mode.
+
+### 2. Upload Firmware
+
+Compile and upload the firmware to the ESP32.
+
+
+### 3. Open the Web Interface
+
+After booting, the ESP32 prints its IP address to the Serial Monitor:
+
+```
+IP: 192.168.x.x
+```
+
+Open the address in a browser to access the monitoring dashboard.

@@ -1,275 +1,706 @@
 #include <pgmspace.h>
 
-const char PAGE_MAIN[] PROGMEM = R"=====(
+const char PAGE_MAIN[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
-<html>
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width">
-        <title>Fish Tank Overview</title>
-        <link rel="icon" href="data">
-        <style>
-            body {
-                background-color: #f2f2f2;
-                font-family: Arial, sans-serif;
-                text-align: center;
-            }
+<html lang="en">
 
-            h1 {
-                font-size: 36px;
-                color: #3498db;
-                margin-top: 40px;
-            }
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-            h2 {
-                font-size: 24px;
-                color: #444444;
-                margin-bottom: 20px;
-            }
+<title>Aquarium Controller</title>
 
-            .container {
-                display: grid;
-                grid-template-columns: repeat(3, 1fr);
-                grid-gap: 20px;
-                margin-top: 40px;
-                margin-bottom: 60px;
-                margin-left: 10px;
-                margin-right: 10px;
-            }
+<style>
 
-            .bodytext {
-                font-size: 24px;
-                font-weight: light;
-                border-radius: 5px;
-                padding: 10px;
-                background-color: #ffffff;
-                color: #333333;
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                box-shadow: 0px 2px 4px rgba(0, 0, 0, 0.1);
-            }
+:root
+{
+    --bg: #101418;
+    --card: #1b222b;
+    --card-border: #2b3542;
 
-            .bodytext::after {
-                content: '';
-                display: block;
-                clear: both;
-            }
+    --text: #e8eef5;
+    --text-secondary: #9aa7b5;
 
-            .bodytext:before {
-                content: '';
-                display: block;
-                clear: both;
-            }
+    --accent: #4ea1ff;
+    --good: #35c46b;
+    --warn: #ffb020;
+    --danger: #ff5d5d;
 
-            .bodytext > div {
-                display: flex;
-                align-items: center;
-                margin-left: 10px;
-            }
+    --shadow:
+        0 4px 12px rgba(0,0,0,0.25);
+}
 
-            .bodytext > div:first-child {
-                flex-grow: 1;
-            }
+*
+{
+    box-sizing: border-box;
+}
 
-            .bodytext > div:last-child {
-                margin-left: auto;
-                flex-shrink: 1;
-                margin-left: 5px;
-                margin-right: 10px;
-            }
+body
+{
+    margin: 0;
+    padding: 24px;
 
-            .unit {
-                flex-shrink: 1;
-                flex-basis: auto;
-            }
+    background: var(--bg);
+    color: var(--text);
 
-            
-            .checkbox {
-                position: relative;
-                cursor: pointer;
-                padding-left: 35px;
-                margin-bottom: 24px;
-                display: inline-block;
-                vertical-align: middle;
-            }
+    font-family:
+        Inter,
+        system-ui,
+        sans-serif;
+}
 
-            .checkbox input {
-                position: absolute;
-                opacity: 0;
-                cursor: pointer;
-            }
+.container
+{
+    max-width: 1200px;
+    margin: 0 auto;
+}
 
-            .checkmark {
-                position: absolute;
-                top: 0;
-                left: 0;
-                height: 25px;
-                width: 25px;
-                background-color: #f2f2f2;
-                border: 2px solid #3498db;
-                border-radius: 5px;
-            }
+header
+{
+    margin-bottom: 32px;
+}
 
-            .checkbox:hover input ~ .checkmark {
-                background-color: #e6e6e6;
-            }
+h1
+{
+    margin: 0;
+    font-size: 2rem;
+    font-weight: 700;
+}
 
-            .checkbox input:checked ~ .checkmark {
-                background-color: #3498db;
-                border: 2px solid #3498db;
-            }
+.subtitle
+{
+    margin-top: 8px;
+    color: var(--text-secondary);
+}
 
-            .checkmark:after {
-                content: "";
-                position: absolute;
-                display: none;
-            }
+.section
+{
+    margin-bottom: 32px;
+}
 
-            .checkbox input:checked ~ .checkmark:after {
-                display: block;
-            }
+.section-title
+{
+    margin-bottom: 16px;
 
-            .checkbox .checkmark:after {
-                left: 7px;
-                top: 3px;
-                width: 5px;
-                height: 10px;
-                border: solid #fff;
-                border-width: 0 2px 2px 0;
-                transform: rotate(45deg);
-            }
+    font-size: 0.95rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
 
-            .last {
-                display: flex;
-                justify-content: center;
-                align-items: center;
-            }
-        </style>
-    </head>
+    color: var(--text-secondary);
+}
 
-    <body onload="fetchData()">
-        <h1>Fish Tank Overview</h1>
-        <h2>Monitoring</h2>
-        <div class="container">
-            <div class="bodytext">
-                <div class="container-text">Temperature:</div>
-                <div id="temp"></div>
-                <div class="unit">°C</div>
-            </div>
-            <div class="bodytext">
-                <div>Level:</div>
-                <div id="dist"></div>
-                <div class="unit">%</div>
-            </div>
-            <div class="bodytext">
-                <div>Luminosity:</div>
-                <div id="lum"></div>
-                <div class="unit">%</div>
-            </div>
+.grid
+{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+}
+
+.card
+{
+    background: var(--card);
+    border: 1px solid var(--card-border);
+
+    border-radius: 16px;
+
+    padding: 20px;
+
+    box-shadow: var(--shadow);
+}
+
+.metric-label
+{
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+.metric-value
+{
+    margin-top: 12px;
+
+    font-size: 2rem;
+    font-weight: 700;
+}
+
+.metric-unit
+{
+    font-size: 1rem;
+    color: var(--text-secondary);
+}
+
+.status
+{
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+
+    margin-top: 12px;
+
+    font-size: 0.9rem;
+}
+
+.status-dot
+{
+    width: 10px;
+    height: 10px;
+
+    border-radius: 50%;
+}
+
+.status-good
+{
+    background: var(--good);
+}
+
+.status-warn
+{
+    background: var(--warn);
+}
+
+.status-danger
+{
+    background: var(--danger);
+}
+
+.control-row
+{
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+
+    padding: 14px 0;
+
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+.control-row:last-child
+{
+    border-bottom: none;
+}
+
+.switch
+{
+    position: relative;
+
+    width: 54px;
+    height: 28px;
+}
+
+.switch input
+{
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.slider
+{
+    position: absolute;
+    inset: 0;
+
+    cursor: pointer;
+
+    background: #4b5563;
+
+    border-radius: 999px;
+
+    transition: 0.2s;
+}
+
+.slider::before
+{
+    content: "";
+
+    position: absolute;
+
+    width: 22px;
+    height: 22px;
+
+    left: 3px;
+    top: 3px;
+
+    border-radius: 50%;
+
+    background: white;
+
+    transition: 0.2s;
+}
+
+input:checked + .slider
+{
+    background: var(--accent);
+}
+
+input:checked + .slider::before
+{
+    transform: translateX(26px);
+}
+
+.log
+{
+    font-family: monospace;
+
+    font-size: 0.9rem;
+
+    color: #c9d4df;
+
+    max-height: 220px;
+    overflow-y: auto;
+
+    line-height: 1.5;
+}
+
+.footer
+{
+    margin-top: 48px;
+
+    text-align: center;
+    color: var(--text-secondary);
+
+    font-size: 0.85rem;
+}
+
+@media (max-width: 600px)
+{
+    body
+    {
+        padding: 16px;
+    }
+
+    .metric-value
+    {
+        font-size: 1.6rem;
+    }
+}
+
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <header>
+        <h1>Aquarium Controller</h1>
+        <div class="subtitle">
+            ESP32 environmental monitoring and actuator control
         </div>
-        <h2>Control</h2>
-        <div class="container">
-            <div class="bodytext">
-                <div>Pump 1 control:</div>
-                <div class="checkbox">
-                    <input type="checkbox" id="ctrlpump1" onclick="controlPump(1)">
-                    <label for="ctrlpump1" class="checkmark"></label>
+    </header>
+
+    <section class="section">
+        <div class="section-title">
+            Telemetry
+        </div>
+
+        <div class="grid">
+
+            <div class="card">
+                <div class="metric-label">
+                    Water Temperature
+                </div>
+
+                <div class="metric-value">
+                    <span id="temp">--</span>
+                    <span class="metric-unit">°C</span>
+                </div>
+
+                <div class="status">
+                    <div id="tempDot" class="status-dot status-good"></div>
+                    <span id="tempStatus">Normal</span>
                 </div>
             </div>
-            <div class="bodytext">
-                <div>Pump 2 control:</div>
-                <div class="checkbox">
-                    <input type="checkbox" id="ctrlpump2" onclick="controlPump(2)">
-                    <label for="ctrlpump2" class="checkmark"></label>
+
+            <div class="card">
+                <div class="metric-label">
+                    Water Level
+                </div>
+
+                <div class="metric-value">
+                    <span id="dist">--</span>
+                    <span class="metric-unit">%</span>
+                </div>
+
+                <div class="status">
+                    <div id="distDot" class="status-dot status-good"></div>
+                    <span id="distStatus">Normal</span>
                 </div>
             </div>
-            <div class="bodytext">
-                <div>Pump 3 control:</div>
-                <div class="checkbox">
-                    <input type="checkbox" id="ctrlpump3" onclick="controlPump(3)">
-                    <label for="ctrlpump3" class="checkmark"></label>
+
+            <div class="card">
+                <div class="metric-label">
+                    Luminosity
+                </div>
+
+                <div class="metric-value">
+                    <span id="lum">--</span>
+                    <span class="metric-unit">%</span>
+                </div>
+
+                <div class="status">
+                    <div id="lumDot" class="status-dot status-good"></div>
+                    <span id="lumStatus">Normal</span>
                 </div>
             </div>
+
         </div>
-        <h2>Alerts</h2>
-        <div class="container">
-            <div class="bodytext">
-                <div>Temperature alert:</div>
-                <div id="alertTemp" class="alert"></div>
+    </section>
+
+    <section class="section">
+
+        <div class="section-title">
+            Actuator Control
+        </div>
+
+        <div class="card">
+
+            <div class="control-row">
+                <div>
+                    Pump Fill
+                </div>
+
+                <label class="switch">
+                    <input
+                        type="checkbox"
+                        id="pumpFill"
+                        onchange="setPump(1, this.checked)"
+                    >
+
+                    <span class="slider"></span>
+                </label>
             </div>
-            <div class="bodytext">
-                <div>Distance alert:</div>
-                <div id="alertDist" class="alert"></div>
+
+            <div class="control-row">
+                <div>
+                    Pump Drain
+                </div>
+
+                <label class="switch">
+                    <input
+                        type="checkbox"
+                        id="pumpDrain"
+                        onchange="setPump(2, this.checked)"
+                    >
+
+                    <span class="slider"></span>
+                </label>
             </div>
-            <div class="bodytext">
-                <div>Luminosity alert:</div>
-                <div id="alertLum" class="alert"></div>
+
+        </div>
+    </section>
+
+    <section class="section">
+
+        <div class="section-title">
+            System State
+        </div>
+
+        <div class="grid">
+
+            <div class="card">
+                <div class="metric-label">
+                    Pump State
+                </div>
+
+                <div
+                    id="pumpState"
+                    class="metric-value"
+                    style="font-size:1.4rem;"
+                >
+                    OFF
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="metric-label">
+                    Heater
+                </div>
+
+                <div
+                    id="heaterState"
+                    class="metric-value"
+                    style="font-size:1.4rem;"
+                >
+                    OFF
+                </div>
+            </div>
+
+        </div>
+
+    </section>
+
+    <section class="section">
+
+        <div class="section-title">
+            Event Log
+        </div>
+
+        <div class="card">
+            <div id="log" class="log">
+                System initialized
             </div>
         </div>
-        <h2>Action Log</h2>
-        <div class="last container">
-            <div class="bodytext">
-                <div>Action log:</div>
-                <div id="log"></div>
-            </div>
-        </div>
-        <script>
-            function fetchData() {
-                var xhttp = new XMLHttpRequest();
-                xhttp.onreadystatechange = function() {
-                    if (this.readyState === 4 && this.status === 200) {
-                        // Parse the XML response
-                        var xmlDoc = this.responseXML;
-    
-                        // Extract sensor data from the XML
-                        var temperature = xmlDoc.getElementsByTagName("TEMP")[0].textContent;
-                        var waterLevel = xmlDoc.getElementsByTagName("DIST")[0].textContent;
-                        var luminosity = xmlDoc.getElementsByTagName("LUM")[0].textContent;
-    
-                        // Update the placeholders with the fetched data
-                        document.getElementById("temp").textContent = temperature;
-                        document.getElementById("dist").textContent = waterLevel;
-                        document.getElementById("lum").textContent = luminosity;
-                    }
-                };
-    
-                // Send a GET request to the ESP32's XML endpoint
-                xhttp.open("GET", "/xml", true);
-                xhttp.send();
-            }
-    
-            // Set an interval to periodically fetch and update data
-            setInterval(fetchData, 5000);
-    
-            // Define variables to store pump states
-            var pumpStates = {
-                pump1: false,
-                pump2: false,
-                pump3: false
-            };
 
-            // Function to update pump state when checkbox is clicked
-            function controlPump(pumpId) {
-                var checkbox = document.getElementById("ctrlpump" + pumpId);
-                pumpStates["pump" + pumpId] = checkbox.checked;
+    </section>
 
-                // Send the updated pump state to the ESP32 immediately
-                sendPumpControl(pumpId, checkbox.checked);
-            }
+    <div class="footer">
+        ESP32 Aquarium Controller
+    </div>
 
-            // Function to send pump control settings to ESP32
-            function sendPumpControl(pumpId, state) {
-                var jsonData = JSON.stringify({ pumpId: pumpId, state: state });
-                var xhttp = new XMLHttpRequest();
-                var endpointUrl = "/controlPump";
-                xhttp.open("POST", endpointUrl, true);
-                xhttp.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
-                xhttp.send(jsonData);
-            }
+</div>
 
-        </script>
-    </body>
-    
+<script>
+
+const state =
+{
+    temp: 0,
+    dist: 0,
+    lum: 0
+};
+
+// Pump mode labels matching the backend PumpMode enum (OFF=0, FILL=1, DRAIN=2):
+const PUMP_LABELS = ["OFF", "FILL", "DRAIN"];
+
+function log(message)
+{
+    const logElement =
+        document.getElementById("log");
+
+    const timestamp =
+        new Date().toLocaleTimeString();
+
+    logElement.innerHTML =
+        `[${timestamp}] ${message}<br>` +
+        logElement.innerHTML;
+}
+
+function setStatus(dotId, textId, level, text)
+{
+    const dot =
+        document.getElementById(dotId);
+
+    dot.className =
+        `status-dot status-${level}`;
+
+    document.getElementById(textId)
+        .textContent = text;
+}
+
+async function fetchTelemetry()
+{
+    try
+    {
+        const response =
+            await fetch("/xml");
+
+        const text =
+            await response.text();
+
+        const xml =
+            new DOMParser()
+                .parseFromString(
+                    text,
+                    "text/xml"
+                );
+
+        state.temp =
+            parseFloat(
+                xml.getElementsByTagName("TEMP")[0]
+                    .textContent
+            );
+
+        state.dist =
+            parseFloat(
+                xml.getElementsByTagName("DIST")[0]
+                    .textContent
+            );
+
+        state.lum =
+            parseFloat(
+                xml.getElementsByTagName("LUM")[0]
+                    .textContent
+            );
+
+        // Reads pump mode and heater state from the XML response:
+        const pumpMode =
+            parseInt(
+                xml.getElementsByTagName("PUMP")[0]
+                    .textContent
+            );
+
+        const heaterOn =
+            parseInt(
+                xml.getElementsByTagName("HEATER")[0]
+                    .textContent
+            ) === 1;
+
+        document.getElementById("temp")
+            .textContent =
+            state.temp.toFixed(1);
+
+        document.getElementById("dist")
+            .textContent =
+            state.dist.toFixed(1);
+
+        document.getElementById("lum")
+            .textContent =
+            state.lum.toFixed(1);
+
+        // Updates pump state display using the label that matches the received mode index:
+        document.getElementById("pumpState")
+            .textContent =
+            PUMP_LABELS[pumpMode] ?? "OFF";
+
+        // Updates heater state display:
+        document.getElementById("heaterState")
+            .textContent =
+            heaterOn ? "ON" : "OFF";
+
+        // Syncs the pump toggle switches to reflect the actual pump state from the backend:
+        document.getElementById("pumpFill").checked =
+            pumpMode === 1;
+
+        document.getElementById("pumpDrain").checked =
+            pumpMode === 2;
+
+        updateIndicators();
+    }
+    catch (err)
+    {
+        log("Communication error");
+    }
+}
+
+function updateIndicators()
+{
+    if (state.temp > 26)
+    {
+        setStatus(
+            "tempDot",
+            "tempStatus",
+            "danger",
+            "High"
+        );
+    }
+    else
+    {
+        setStatus(
+            "tempDot",
+            "tempStatus",
+            "good",
+            "Normal"
+        );
+    }
+
+    if (state.dist > 90 || state.dist < 20)
+    {
+        setStatus(
+            "distDot",
+            "distStatus",
+            "warn",
+            "Attention"
+        );
+    }
+    else
+    {
+        setStatus(
+            "distDot",
+            "distStatus",
+            "good",
+            "Normal"
+        );
+    }
+
+    if (state.lum < 40)
+    {
+        setStatus(
+            "lumDot",
+            "lumStatus",
+            "warn",
+            "Low"
+        );
+    }
+    else
+    {
+        setStatus(
+            "lumDot",
+            "lumStatus",
+            "good",
+            "Normal"
+        );
+    }
+}
+
+async function setPump(pumpId, enabled)
+{
+    // Prevents both pumps from being enabled simultaneously:
+    if (enabled)
+    {
+        const otherId = pumpId === 1 ? "pumpDrain" : "pumpFill";
+
+        const otherToggle =
+            document.getElementById(otherId);
+
+        if (otherToggle.checked)
+        {
+            otherToggle.checked = false;
+
+            await fetch("/controlPump",
+            {
+                method: "POST",
+
+                headers:
+                {
+                    "Content-Type":
+                        "application/json"
+                },
+
+                body: JSON.stringify(
+                {
+                    pumpId: pumpId === 1 ? 2 : 1,
+                    state: false
+                })
+            });
+        }
+    }
+
+    try
+    {
+        await fetch("/controlPump",
+        {
+            method: "POST",
+
+            headers:
+            {
+                "Content-Type":
+                    "application/json"
+            },
+
+            body: JSON.stringify(
+            {
+                pumpId: pumpId,
+                state: enabled
+            })
+        });
+
+        log(
+            `Pump ${pumpId} ${
+                enabled ? "enabled" : "disabled"
+            }`
+        );
+    }
+    catch (err)
+    {
+        log("Pump control failed");
+    }
+}
+
+fetchTelemetry();
+
+setInterval(fetchTelemetry, 2000);
+
+</script>
+
+</body>
 </html>
-)=====";
+)rawliteral";
