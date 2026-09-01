@@ -2,14 +2,6 @@
 
 This is an ESP32-WROOM-32 firmware modernization project.
 
-Before making architectural or behavioral changes, consult:
-
-- `docs/firmware-specification.md`
-
-When creating or modifying source code, follow:
-
-- `docs/coding-style.md`
-
 ## Development principles
 
 - The user remains responsible for the architecture and design decisions.
@@ -20,6 +12,15 @@ When creating or modifying source code, follow:
 - Do not introduce new dependencies without explaining why.
 - Do not silently change architectural decisions defined in the specification.
 - When requirements are ambiguous, ask instead of guessing.
+
+## Project documentation
+
+Before implementing a feature or making a behavioral change:
+
+1. Read `docs/firmware-specification.md`.
+2. Read `docs/coding-style.md` when modifying source code.
+3. Inspect the existing implementation before proposing changes.
+4. Preserve the architecture defined by the specification unless the user explicitly requests an architectural change.
 
 ## Validation
 
