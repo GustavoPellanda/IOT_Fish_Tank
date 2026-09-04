@@ -3,6 +3,7 @@
 #include <stdio.h>
 
 #include "core/sensor_events.h"
+#include "core/state_machine.h"
 #include "freertos/task.h"
 
 #define CONTROL_QUEUE_LENGTH       12
@@ -10,34 +11,27 @@
 #define CONTROL_TASK_PRIORITY      3
 #define CONTROL_TASK_CORE          1
 
-// Process an event received from the sensors:
-static void process_sensor_event(const sensor_event_t *event) {
-    if(!event->valid) {
-        printf("[CONTROL] Sensor event invalid: %d\n", event->type);
-        return;
-    }
-
-    switch(event->type) {
-        case SENSOR_EVENT_TEMPERATURE:
-            printf("[CONTROL] Temperature: %.2f C\n", event->value.temperature_c);
-            break;
-        case SENSOR_EVENT_LEVEL:
-            printf("[CONTROL] Level distance: %.2f cm\n", event->value.level_cm);
-            break;
-        case SENSOR_EVENT_LUMINOSITY:
-            printf("[CONTROL] Luminosity: %d\n", event->value.luminosity_raw);
-            break;
-    }
-}
-
 // Run the main control logic:
 static void control_task(void *arg) {
     QueueHandle_t sensor_queue = (QueueHandle_t)arg;
+    state_machine_t state_machine;
     sensor_event_t event;
+
+    if(state_machine_init(&state_machine) != ESP_OK) {
+        printf("[CONTROL] Failed to initialize state machine\n");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    printf("[CONTROL] Control task started and waiting for sensor events\n");
 
     while(1) {
         if(xQueueReceive(sensor_queue, &event, portMAX_DELAY) == pdTRUE) {
-            process_sensor_event(&event);
+            printf("[CONTROL] Received sensor event | type=%d valid=%s\n", event.type, event.valid ? "true" : "false");
+
+            if(state_machine_process_sensor_event(&state_machine, &event) != ESP_OK) {
+                printf("[CONTROL] State machine failed to process event | type=%d\n", event.type);
+            }
         }
     }
 }
