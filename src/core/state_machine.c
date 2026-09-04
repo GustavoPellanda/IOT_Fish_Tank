@@ -74,6 +74,8 @@ static esp_err_t apply_outputs_for_state(system_state_t state) {
         drain_enabled ? "ON" : "OFF",
         heater_enabled ? "ON" : "OFF"
     );
+    
+    // Turns the actuators on or off based on the current state:
     ESP_RETURN_ON_ERROR(pumps_set_state(PUMP_FILL, fill_enabled), "state_machine", "failed to set fill pump");
     ESP_RETURN_ON_ERROR(pumps_set_state(PUMP_DRAIN, drain_enabled), "state_machine", "failed to set drain pump");
     ESP_RETURN_ON_ERROR(heater_set_enabled(heater_enabled), "state_machine", "failed to set heater");

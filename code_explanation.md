@@ -8,8 +8,6 @@ The control task consumes events from the shared queue and forwards each receive
 
 The control flow is event-driven. Sensor tasks do not control GPIOs directly; they only publish readings. The control task owns the state machine, and the state machine is the only part of the control layer that decides when the fill pump, drain pump, or heater should be enabled.
 
-The firmware is also rich in terminal prints during control execution. The control task prints received events, the state machine prints sensor updates and state evaluations, state transitions are printed with their reason, and actuator requests are printed before the relay drivers are called. These messages are intended to make future logging and automated behavior tests easier to implement.
-
 ## Next Steps
 
 - Sensor filtering and validation.
