@@ -74,11 +74,14 @@ static esp_err_t apply_outputs_for_state(system_state_t state) {
         drain_enabled ? "ON" : "OFF",
         heater_enabled ? "ON" : "OFF"
     );
-    
-    // Turns the actuators on or off based on the current state:
+
+    // Attempt heater shutdown before any pump operation can fail or enable a pump:
+    if(!heater_enabled) ESP_RETURN_ON_ERROR(heater_set_enabled(false), "state_machine", "failed to disable heater");
+
+    // Enable heating only after both pumps have been successfully disabled:
     ESP_RETURN_ON_ERROR(pumps_set_state(PUMP_FILL, fill_enabled), "state_machine", "failed to set fill pump");
     ESP_RETURN_ON_ERROR(pumps_set_state(PUMP_DRAIN, drain_enabled), "state_machine", "failed to set drain pump");
-    ESP_RETURN_ON_ERROR(heater_set_enabled(heater_enabled), "state_machine", "failed to set heater");
+    if(heater_enabled) ESP_RETURN_ON_ERROR(heater_set_enabled(true), "state_machine", "failed to enable heater");
 
     return ESP_OK;
 }
@@ -193,6 +196,12 @@ static void handle_draining_state(state_machine_t *machine) {
 static void handle_heating_state(state_machine_t *machine) {
     if(has_critical_sensor_fault(machine)) {
         set_state(machine, SYSTEM_STATE_ERROR, "critical sensor invalid while heating");
+        return;
+    }
+
+    // A larger distance means less water; stop heating at the existing empty threshold:
+    if(machine->level_cm > LEVEL_EMPTY_DISTANCE_CM) {
+        set_state(machine, SYSTEM_STATE_IDLE, "water level too low for heating");
         return;
     }
 
