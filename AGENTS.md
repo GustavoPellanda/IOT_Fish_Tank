@@ -28,7 +28,7 @@ Before implementing changes:
 
 ## Validation
 
-* Do not execute build, test, flash, or other shell commands automatically.
+* Do not execute build, test or flash commands automatically.
 * Only modify the files necessary to fulfill the user's request.
 * Report the relevant changes after modifying the code.
 * Do not create commits unless explicitly requested.
