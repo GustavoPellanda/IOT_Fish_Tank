@@ -2,6 +2,7 @@
 #define STATE_MACHINE_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "core/sensor_events.h"
 #include "esp_err.h"
@@ -29,6 +30,8 @@ typedef struct {
     bool level_valid;           // Last level reading validity
     bool luminosity_valid;      // Last luminosity reading validity
     bool actuator_fault;        // Actuator fault awaiting successful shutdown recovery
+    int64_t operation_started_us; // Monotonic time when the current operation started
+    bool operation_timed_out;   // Operation timeout latched until initialization
 } state_machine_t;
 
 esp_err_t state_machine_init(
@@ -42,6 +45,11 @@ esp_err_t state_machine_process_sensor_event(
 
 esp_err_t state_machine_retry_shutdown(
     state_machine_t *machine    // State machine with a pending actuator shutdown
+);
+
+esp_err_t state_machine_check_operation_timeout(
+    state_machine_t *machine,   // State machine whose active operation is supervised
+    int64_t now_us              // Current monotonic time in microseconds
 );
 
 const char *state_machine_state_to_string(

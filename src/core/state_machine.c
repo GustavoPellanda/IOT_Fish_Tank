@@ -6,12 +6,16 @@
 #include "actuators/heater/heater.h"
 #include "actuators/pumps/pumps.h"
 #include "esp_check.h"
+#include "esp_timer.h"
 
 #define LEVEL_EMPTY_DISTANCE_CM         25.0f
 #define LEVEL_FULL_DISTANCE_CM          8.0f
 #define LEVEL_TARGET_DISTANCE_CM        14.0f
 #define TEMPERATURE_LOW_C               24.0f
 #define TEMPERATURE_TARGET_C            26.0f
+#define FILLING_TIMEOUT_US               300000000LL
+#define DRAINING_TIMEOUT_US              300000000LL
+#define HEATING_TIMEOUT_US               3600000000LL
 
 // Return readable text for a system state:
 const char *state_machine_state_to_string(system_state_t state) {
@@ -44,6 +48,9 @@ static void set_state(state_machine_t *machine, system_state_t next_state, const
         reason
     );
     machine->state = next_state;
+    if(next_state == SYSTEM_STATE_FILLING || next_state == SYSTEM_STATE_DRAINING || next_state == SYSTEM_STATE_HEATING) {
+        machine->operation_started_us = esp_timer_get_time();
+    }
 }
 
 // Attempt every shutdown command and return the first failure:
@@ -256,6 +263,11 @@ static void handle_manual_state(state_machine_t *machine) {
 
 // Evaluate the error state transitions:
 static void handle_error_state(state_machine_t *machine) {
+    if(machine->operation_timed_out) {
+        printf("[STATE] Staying in ERROR | operation timeout requires restart\n");
+        return;
+    }
+
     if(machine->actuator_fault) {
         printf("[STATE] Staying in ERROR | waiting for actuator shutdown\n");
         return;
@@ -310,6 +322,8 @@ esp_err_t state_machine_init(state_machine_t *machine) {
     machine->level_valid = false;
     machine->luminosity_valid = false;
     machine->actuator_fault = false;
+    machine->operation_started_us = 0;
+    machine->operation_timed_out = false;
 
     printf("[STATE] Initialized state machine | initial_state=%s\n", state_machine_state_to_string(machine->state));
 
@@ -340,4 +354,32 @@ esp_err_t state_machine_retry_shutdown(state_machine_t *machine) {
     handle_error_state(machine);
 
     return ESP_OK;
+}
+
+// Stop an expired operation and block automatic recovery until initialization:
+esp_err_t state_machine_check_operation_timeout(state_machine_t *machine, int64_t now_us) {
+    if(machine == NULL || now_us < 0) return ESP_ERR_INVALID_ARG;
+    if(machine->operation_timed_out) return ESP_OK;
+
+    int64_t timeout_us;
+    switch(machine->state) {
+        case SYSTEM_STATE_FILLING:
+            timeout_us = FILLING_TIMEOUT_US;
+            break;
+        case SYSTEM_STATE_DRAINING:
+            timeout_us = DRAINING_TIMEOUT_US;
+            break;
+        case SYSTEM_STATE_HEATING:
+            timeout_us = HEATING_TIMEOUT_US;
+            break;
+        default:
+            return ESP_OK;
+    }
+    if(now_us < machine->operation_started_us) return ESP_ERR_INVALID_ARG;
+    if(now_us - machine->operation_started_us < timeout_us) return ESP_OK;
+
+    machine->operation_timed_out = true;
+    set_state(machine, SYSTEM_STATE_ERROR, "operation duration limit reached");
+
+    return apply_state_outputs(machine);
 }

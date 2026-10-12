@@ -4,6 +4,7 @@
 
 #include "core/sensor_events.h"
 #include "core/state_machine.h"
+#include "esp_timer.h"
 #include "freertos/task.h"
 
 #define CONTROL_QUEUE_LENGTH       12
@@ -25,7 +26,12 @@ static void control_task(void *arg) {
     printf("[CONTROL] Control task started and waiting for sensor events\n");
 
     while(1) {
-        if(xQueueReceive(sensor_queue, &event, pdMS_TO_TICKS(CONTROL_QUEUE_WAIT_MS)) == pdTRUE) {
+        BaseType_t event_received = xQueueReceive(sensor_queue, &event, pdMS_TO_TICKS(CONTROL_QUEUE_WAIT_MS));
+        if(state_machine_check_operation_timeout(&state_machine, esp_timer_get_time()) != ESP_OK) {
+            printf("[CONTROL] Failed to shut down an expired operation\n");
+        }
+
+        if(event_received == pdTRUE) {
             printf("[CONTROL] Received sensor event | type=%d valid=%s\n", event.type, event.valid ? "true" : "false");
 
             if(state_machine_process_sensor_event(&state_machine, &event) != ESP_OK) {

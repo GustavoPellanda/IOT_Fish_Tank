@@ -5,6 +5,7 @@
 #include "actuators/heater/heater.h"
 #include "actuators/pumps/pumps.h"
 #include "core/state_machine.h"
+#include "esp_timer.h"
 #include "fake_actuators.h"
 #include "unity.h"
 
@@ -90,6 +91,8 @@ static void test_initialization_disables_actuators(void) {
     TEST_ASSERT_FALSE(machine.level_valid);
     TEST_ASSERT_FALSE(machine.luminosity_valid);
     TEST_ASSERT_FALSE(machine.actuator_fault);
+    TEST_ASSERT_TRUE(machine.operation_started_us == 0);
+    TEST_ASSERT_FALSE(machine.operation_timed_out);
 }
 
 // Keep outputs off when a cold temperature arrives before the first level reading:
@@ -304,6 +307,7 @@ static void test_null_arguments_return_invalid_arg(void) {
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, state_machine_process_sensor_event(NULL, &event));
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, state_machine_process_sensor_event(&machine, NULL));
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, state_machine_retry_shutdown(NULL));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, state_machine_check_operation_timeout(NULL, 0));
     TEST_ASSERT_EQUAL_UINT(commands_before, fake_actuators_get_state()->command_count);
 }
 
@@ -550,6 +554,198 @@ static void test_shutdown_retry_without_fault_does_not_issue_commands(void) {
     assert_state_and_outputs(SYSTEM_STATE_HEATING, false, false, true);
 }
 
+// Stop filling exactly five minutes after its initial activation:
+static void test_filling_timeout_boundary(void) {
+    TEST_ASSERT_EQUAL(ESP_OK, send_temperature(27.0f, true));
+    TEST_ASSERT_EQUAL(ESP_OK, send_level(30.0f, true));
+    int64_t started_us = machine.operation_started_us;
+    size_t commands_before = fake_actuators_get_state()->command_count;
+
+    TEST_ASSERT_EQUAL(ESP_OK, state_machine_check_operation_timeout(&machine, started_us + 300000000LL - 1));
+    assert_state_and_outputs(SYSTEM_STATE_FILLING, true, false, false);
+    TEST_ASSERT_EQUAL_UINT(commands_before, fake_actuators_get_state()->command_count);
+    TEST_ASSERT_FALSE(machine.operation_timed_out);
+
+    TEST_ASSERT_EQUAL(ESP_OK, state_machine_check_operation_timeout(&machine, started_us + 300000000LL));
+    assert_state_and_outputs(SYSTEM_STATE_ERROR, false, false, false);
+    TEST_ASSERT_TRUE(machine.operation_timed_out);
+    TEST_ASSERT_FALSE(machine.actuator_fault);
+}
+
+// Stop draining exactly five minutes after its initial activation:
+static void test_draining_timeout_boundary(void) {
+    TEST_ASSERT_EQUAL(ESP_OK, send_temperature(27.0f, true));
+    TEST_ASSERT_EQUAL(ESP_OK, send_level(7.0f, true));
+    int64_t started_us = machine.operation_started_us;
+    size_t commands_before = fake_actuators_get_state()->command_count;
+
+    TEST_ASSERT_EQUAL(ESP_OK, state_machine_check_operation_timeout(&machine, started_us + 300000000LL - 1));
+    assert_state_and_outputs(SYSTEM_STATE_DRAINING, false, true, false);
+    TEST_ASSERT_EQUAL_UINT(commands_before, fake_actuators_get_state()->command_count);
+    TEST_ASSERT_FALSE(machine.operation_timed_out);
+
+    TEST_ASSERT_EQUAL(ESP_OK, state_machine_check_operation_timeout(&machine, started_us + 300000000LL));
+    assert_state_and_outputs(SYSTEM_STATE_ERROR, false, false, false);
+    TEST_ASSERT_TRUE(machine.operation_timed_out);
+    TEST_ASSERT_FALSE(machine.actuator_fault);
+}
+
+// Preserve the full sixty-minute heating limit beyond signed 32-bit microseconds:
+static void test_heating_timeout_boundary(void) {
+    start_heating();
+    int64_t started_us = machine.operation_started_us;
+    size_t commands_before = fake_actuators_get_state()->command_count;
+
+    TEST_ASSERT_EQUAL(ESP_OK, state_machine_check_operation_timeout(&machine, started_us + 3600000000LL - 1));
+    assert_state_and_outputs(SYSTEM_STATE_HEATING, false, false, true);
+    TEST_ASSERT_EQUAL_UINT(commands_before, fake_actuators_get_state()->command_count);
+    TEST_ASSERT_FALSE(machine.operation_timed_out);
+
+    TEST_ASSERT_EQUAL(ESP_OK, state_machine_check_operation_timeout(&machine, started_us + 3600000000LL));
+    assert_state_and_outputs(SYSTEM_STATE_ERROR, false, false, false);
+    TEST_ASSERT_TRUE(machine.operation_timed_out);
+    TEST_ASSERT_FALSE(machine.actuator_fault);
+}
+
+// Keep each operation's original deadline despite repeated sensor events:
+static void test_sensor_events_do_not_extend_operation_timeout(void) {
+    const float levels[] = {30.0f, 7.0f, 14.0f};
+    const float temperatures[] = {27.0f, 27.0f, 23.0f};
+    const int64_t limits_us[] = {300000000LL, 300000000LL, 3600000000LL};
+
+    for(size_t index = 0; index < 3; index++) {
+        reset_machine();
+        TEST_ASSERT_EQUAL(ESP_OK, send_temperature(temperatures[index], true));
+        TEST_ASSERT_EQUAL(ESP_OK, send_level(levels[index], true));
+        int64_t started_us = machine.operation_started_us;
+
+        TEST_ASSERT_EQUAL(ESP_OK, send_temperature(temperatures[index], true));
+        TEST_ASSERT_EQUAL(ESP_OK, send_level(levels[index], true));
+        TEST_ASSERT_EQUAL(ESP_OK, send_luminosity(1000, true));
+        TEST_ASSERT_TRUE(machine.operation_started_us == started_us);
+        TEST_ASSERT_EQUAL(ESP_OK, state_machine_check_operation_timeout(&machine, started_us + limits_us[index]));
+        assert_state_and_outputs(SYSTEM_STATE_ERROR, false, false, false);
+        TEST_ASSERT_TRUE(machine.operation_timed_out);
+    }
+}
+
+// Give a new filling operation its own deadline after a successful previous fill:
+static void test_new_operation_gets_a_fresh_start_time(void) {
+    TEST_ASSERT_EQUAL(ESP_OK, send_temperature(27.0f, true));
+    TEST_ASSERT_EQUAL(ESP_OK, send_level(30.0f, true));
+    TEST_ASSERT_EQUAL(ESP_OK, send_level(14.0f, true));
+    assert_state_and_outputs(SYSTEM_STATE_IDLE, false, false, false);
+
+    int64_t before_new_operation_us = esp_timer_get_time();
+    TEST_ASSERT_EQUAL(ESP_OK, send_level(30.0f, true));
+    TEST_ASSERT_TRUE(machine.operation_started_us >= before_new_operation_us);
+    int64_t started_us = machine.operation_started_us;
+    TEST_ASSERT_EQUAL(ESP_OK, state_machine_check_operation_timeout(&machine, started_us + 300000000LL - 1));
+    assert_state_and_outputs(SYSTEM_STATE_FILLING, true, false, false);
+    TEST_ASSERT_FALSE(machine.operation_timed_out);
+    TEST_ASSERT_EQUAL(ESP_OK, state_machine_check_operation_timeout(&machine, started_us + 300000000LL));
+    assert_state_and_outputs(SYSTEM_STATE_ERROR, false, false, false);
+}
+
+// Apply operation limits only to filling, draining, and heating:
+static void test_inactive_states_have_no_operation_timeout(void) {
+    const system_state_t states[] = {SYSTEM_STATE_IDLE, SYSTEM_STATE_MANUAL, SYSTEM_STATE_ERROR};
+    size_t commands_before = fake_actuators_get_state()->command_count;
+
+    for(size_t index = 0; index < 3; index++) {
+        machine.state = states[index];
+        TEST_ASSERT_EQUAL(ESP_OK, state_machine_check_operation_timeout(&machine, 7200000000LL));
+        assert_state_and_outputs(states[index], false, false, false);
+        TEST_ASSERT_FALSE(machine.operation_timed_out);
+    }
+    TEST_ASSERT_EQUAL_UINT(commands_before, fake_actuators_get_state()->command_count);
+}
+
+// Keep timeout latched through target readings, sensor recovery, and shutdown retries:
+static void test_operation_timeout_blocks_automatic_recovery(void) {
+    start_heating();
+    TEST_ASSERT_EQUAL(ESP_OK, state_machine_check_operation_timeout(&machine, machine.operation_started_us + 3600000000LL));
+    TEST_ASSERT_EQUAL(ESP_OK, send_temperature(26.0f, true));
+    TEST_ASSERT_EQUAL(ESP_OK, send_level(30.0f, true));
+    TEST_ASSERT_EQUAL(ESP_OK, send_temperature(0.0f, false));
+    TEST_ASSERT_EQUAL(ESP_OK, send_temperature(23.0f, true));
+    TEST_ASSERT_EQUAL(ESP_OK, send_luminosity(1000, true));
+    TEST_ASSERT_EQUAL(ESP_OK, state_machine_retry_shutdown(&machine));
+    assert_state_and_outputs(SYSTEM_STATE_ERROR, false, false, false);
+    TEST_ASSERT_TRUE(machine.operation_timed_out);
+
+    size_t commands_before = fake_actuators_get_state()->command_count;
+    TEST_ASSERT_EQUAL(ESP_OK, state_machine_check_operation_timeout(&machine, machine.operation_started_us + 7200000000LL));
+    TEST_ASSERT_EQUAL_UINT(commands_before, fake_actuators_get_state()->command_count);
+    assert_state_and_outputs(SYSTEM_STATE_ERROR, false, false, false);
+}
+
+// Retry failed timeout shutdowns while preserving the restart requirement for every actuator:
+static void test_timeout_shutdown_failures_remain_blocked_after_recovery(void) {
+    const float levels[] = {30.0f, 7.0f, 14.0f};
+    const float temperatures[] = {27.0f, 27.0f, 23.0f};
+    const int64_t limits_us[] = {300000000LL, 300000000LL, 3600000000LL};
+    const fake_actuator_id_t actuators[] = {FAKE_ACTUATOR_FILL_PUMP, FAKE_ACTUATOR_DRAIN_PUMP, FAKE_ACTUATOR_HEATER};
+
+    for(size_t index = 0; index < 3; index++) {
+        reset_machine();
+        TEST_ASSERT_EQUAL(ESP_OK, send_temperature(temperatures[index], true));
+        TEST_ASSERT_EQUAL(ESP_OK, send_level(levels[index], true));
+        size_t commands_before = fake_actuators_get_state()->command_count;
+
+        fake_actuators_fail_next(actuators[index], ESP_FAIL);
+        TEST_ASSERT_EQUAL(ESP_FAIL, state_machine_check_operation_timeout(&machine, machine.operation_started_us + limits_us[index]));
+        TEST_ASSERT_EQUAL_UINT(commands_before + 3, fake_actuators_get_state()->command_count);
+        assert_state_and_outputs(SYSTEM_STATE_ERROR, index == 0, index == 1, index == 2);
+        TEST_ASSERT_TRUE(machine.operation_timed_out);
+        TEST_ASSERT_TRUE(machine.actuator_fault);
+
+        fake_actuators_fail_next(actuators[index], ESP_ERR_TIMEOUT);
+        TEST_ASSERT_EQUAL(ESP_ERR_TIMEOUT, state_machine_retry_shutdown(&machine));
+        TEST_ASSERT_TRUE(machine.actuator_fault);
+        TEST_ASSERT_EQUAL(ESP_OK, state_machine_retry_shutdown(&machine));
+        assert_state_and_outputs(SYSTEM_STATE_ERROR, false, false, false);
+        TEST_ASSERT_FALSE(machine.actuator_fault);
+        TEST_ASSERT_TRUE(machine.operation_timed_out);
+        TEST_ASSERT_EQUAL(ESP_OK, send_level(levels[index], true));
+        assert_state_and_outputs(SYSTEM_STATE_ERROR, false, false, false);
+    }
+}
+
+// Clear a latched timeout only by initializing the machine as on firmware startup:
+static void test_initialization_clears_operation_timeout(void) {
+    start_heating();
+    TEST_ASSERT_EQUAL(ESP_OK, state_machine_check_operation_timeout(&machine, machine.operation_started_us + 3600000000LL));
+    TEST_ASSERT_TRUE(machine.operation_timed_out);
+
+    TEST_ASSERT_EQUAL(ESP_OK, state_machine_init(&machine));
+    assert_state_and_outputs(SYSTEM_STATE_IDLE, false, false, false);
+    TEST_ASSERT_TRUE(machine.operation_started_us == 0);
+    TEST_ASSERT_FALSE(machine.operation_timed_out);
+    start_heating();
+    TEST_ASSERT_FALSE(machine.operation_timed_out);
+}
+
+// Reject negative or backwards monotonic times without changing an active operation:
+static void test_invalid_operation_check_times_do_not_change_outputs(void) {
+    start_heating();
+    size_t commands_before = fake_actuators_get_state()->command_count;
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, state_machine_check_operation_timeout(&machine, -1));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, state_machine_check_operation_timeout(&machine, machine.operation_started_us - 1));
+    TEST_ASSERT_EQUAL_UINT(commands_before, fake_actuators_get_state()->command_count);
+    assert_state_and_outputs(SYSTEM_STATE_HEATING, false, false, true);
+    TEST_ASSERT_FALSE(machine.operation_timed_out);
+}
+
+// Detect an expired operation even when its first check occurs after the deadline:
+static void test_operation_timeout_after_deadline(void) {
+    TEST_ASSERT_EQUAL(ESP_OK, send_temperature(27.0f, true));
+    TEST_ASSERT_EQUAL(ESP_OK, send_level(30.0f, true));
+    TEST_ASSERT_EQUAL(ESP_OK, state_machine_check_operation_timeout(&machine, machine.operation_started_us + 300100000LL));
+    assert_state_and_outputs(SYSTEM_STATE_ERROR, false, false, false);
+    TEST_ASSERT_TRUE(machine.operation_timed_out);
+}
+
 // Execute the suite with test locations reported from this source file:
 void run_state_machine_tests(void) {
     UNITY_BEGIN();
@@ -588,5 +784,16 @@ void run_state_machine_tests(void) {
     RUN_TEST(test_shutdown_recovery_still_requires_valid_critical_sensors);
     RUN_TEST(test_active_state_error_is_preserved_when_emergency_shutdown_fails);
     RUN_TEST(test_shutdown_retry_without_fault_does_not_issue_commands);
+    RUN_TEST(test_filling_timeout_boundary);
+    RUN_TEST(test_draining_timeout_boundary);
+    RUN_TEST(test_heating_timeout_boundary);
+    RUN_TEST(test_sensor_events_do_not_extend_operation_timeout);
+    RUN_TEST(test_new_operation_gets_a_fresh_start_time);
+    RUN_TEST(test_inactive_states_have_no_operation_timeout);
+    RUN_TEST(test_operation_timeout_blocks_automatic_recovery);
+    RUN_TEST(test_timeout_shutdown_failures_remain_blocked_after_recovery);
+    RUN_TEST(test_initialization_clears_operation_timeout);
+    RUN_TEST(test_invalid_operation_check_times_do_not_change_outputs);
+    RUN_TEST(test_operation_timeout_after_deadline);
     UNITY_END();
 }
