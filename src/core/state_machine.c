@@ -46,6 +46,17 @@ static void set_state(state_machine_t *machine, system_state_t next_state, const
     machine->state = next_state;
 }
 
+// Attempt every shutdown command and return the first failure:
+static esp_err_t shutdown_outputs(void) {
+    esp_err_t result = heater_set_enabled(false);
+    esp_err_t error = pumps_set_state(PUMP_FILL, false);
+    if(result == ESP_OK) result = error;
+    error = pumps_set_state(PUMP_DRAIN, false);
+    if(result == ESP_OK) result = error;
+
+    return result;
+}
+
 // Apply the actuator output requested by the current state:
 static esp_err_t apply_outputs_for_state(system_state_t state) {
     bool fill_enabled = false;
@@ -75,15 +86,35 @@ static esp_err_t apply_outputs_for_state(system_state_t state) {
         heater_enabled ? "ON" : "OFF"
     );
 
-    // Attempt heater shutdown before any pump operation can fail or enable a pump:
-    if(!heater_enabled) ESP_RETURN_ON_ERROR(heater_set_enabled(false), "state_machine", "failed to disable heater");
+    if(!fill_enabled && !drain_enabled && !heater_enabled) return shutdown_outputs();
 
-    // Enable heating only after both pumps have been successfully disabled:
-    ESP_RETURN_ON_ERROR(pumps_set_state(PUMP_FILL, fill_enabled), "state_machine", "failed to set fill pump");
-    ESP_RETURN_ON_ERROR(pumps_set_state(PUMP_DRAIN, drain_enabled), "state_machine", "failed to set drain pump");
+    // Disable incompatible outputs before enabling the requested actuator:
+    if(!heater_enabled) ESP_RETURN_ON_ERROR(heater_set_enabled(false), "state_machine", "failed to disable heater");
+    if(!fill_enabled) ESP_RETURN_ON_ERROR(pumps_set_state(PUMP_FILL, false), "state_machine", "failed to disable fill pump");
+    if(!drain_enabled) ESP_RETURN_ON_ERROR(pumps_set_state(PUMP_DRAIN, false), "state_machine", "failed to disable drain pump");
+
+    // Enable the requested actuator only after every required shutdown succeeds:
+    if(fill_enabled) ESP_RETURN_ON_ERROR(pumps_set_state(PUMP_FILL, true), "state_machine", "failed to enable fill pump");
+    if(drain_enabled) ESP_RETURN_ON_ERROR(pumps_set_state(PUMP_DRAIN, true), "state_machine", "failed to enable drain pump");
     if(heater_enabled) ESP_RETURN_ON_ERROR(heater_set_enabled(true), "state_machine", "failed to enable heater");
 
     return ESP_OK;
+}
+
+// Record driver failures and request complete shutdown after an active-state error:
+static esp_err_t apply_state_outputs(state_machine_t *machine) {
+    system_state_t requested_state = machine->state;
+    esp_err_t result = apply_outputs_for_state(requested_state);
+
+    if(result != ESP_OK) {
+        machine->actuator_fault = true;
+        set_state(machine, SYSTEM_STATE_ERROR, "actuator command failed");
+        if(requested_state == SYSTEM_STATE_FILLING || requested_state == SYSTEM_STATE_DRAINING || requested_state == SYSTEM_STATE_HEATING) {
+            shutdown_outputs();
+        }
+    }
+
+    return result;
 }
 
 // Update the latest sensor values stored in the state machine:
@@ -225,12 +256,17 @@ static void handle_manual_state(state_machine_t *machine) {
 
 // Evaluate the error state transitions:
 static void handle_error_state(state_machine_t *machine) {
+    if(machine->actuator_fault) {
+        printf("[STATE] Staying in ERROR | waiting for actuator shutdown\n");
+        return;
+    }
+
     if(has_critical_sensor_fault(machine)) {
         printf("[STATE] Staying in ERROR | waiting for critical sensors to recover\n");
         return;
     }
 
-    set_state(machine, SYSTEM_STATE_IDLE, "critical sensors recovered");
+    set_state(machine, SYSTEM_STATE_IDLE, "error conditions cleared");
 }
 
 // Evaluate the current state after a context update:
@@ -273,10 +309,11 @@ esp_err_t state_machine_init(state_machine_t *machine) {
     machine->temperature_valid = false;
     machine->level_valid = false;
     machine->luminosity_valid = false;
+    machine->actuator_fault = false;
 
     printf("[STATE] Initialized state machine | initial_state=%s\n", state_machine_state_to_string(machine->state));
 
-    return apply_outputs_for_state(machine->state);
+    return apply_state_outputs(machine);
 }
 
 // Process one sensor event and update the system state:
@@ -285,7 +322,22 @@ esp_err_t state_machine_process_sensor_event(state_machine_t *machine, const sen
 
     printf("[STATE] Processing sensor event | type=%d current_state=%s\n", event->type, state_machine_state_to_string(machine->state));
     update_sensor_context(machine, event);
+    if(machine->actuator_fault) return state_machine_retry_shutdown(machine);
     evaluate_state(machine);
 
-    return apply_outputs_for_state(machine->state);
+    return apply_state_outputs(machine);
+}
+
+// Retry pending shutdown without enabling outputs or requiring a sensor event:
+esp_err_t state_machine_retry_shutdown(state_machine_t *machine) {
+    if(machine == NULL) return ESP_ERR_INVALID_ARG;
+    if(!machine->actuator_fault) return ESP_OK;
+
+    esp_err_t result = shutdown_outputs();
+    if(result != ESP_OK) return result;
+
+    machine->actuator_fault = false;
+    handle_error_state(machine);
+
+    return ESP_OK;
 }

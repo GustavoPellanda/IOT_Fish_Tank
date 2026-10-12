@@ -30,5 +30,6 @@ Before implementing changes:
 
 * Do not execute build, test or flash commands automatically.
 * Only modify the files necessary to fulfill the user's request.
+* Consult the user before creating a new file.
 * Report the relevant changes after modifying the code.
 * Do not create commits unless explicitly requested.

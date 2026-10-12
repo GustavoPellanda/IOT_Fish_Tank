@@ -32,6 +32,11 @@ static void one_wire_drive_low(void) {
 static esp_err_t one_wire_reset(void) {
     int presence;
 
+    // Verify that the released bus is high before sending the reset pulse:
+    one_wire_release();
+    esp_rom_delay_us(5);
+    if(gpio_get_level(data_gpio) == 0) return ESP_ERR_INVALID_RESPONSE;
+
     // Send the reset pulse and sample the presence pulse window:
     one_wire_drive_low();
     esp_rom_delay_us(480);
@@ -39,6 +44,7 @@ static esp_err_t one_wire_reset(void) {
     esp_rom_delay_us(70);
     presence = gpio_get_level(data_gpio);
     esp_rom_delay_us(410);
+    if(gpio_get_level(data_gpio) == 0) return ESP_ERR_INVALID_RESPONSE;
 
     if(presence == 0) return ESP_OK;
     return ESP_ERR_NOT_FOUND;
@@ -94,6 +100,28 @@ static uint8_t one_wire_read_byte(void) {
     return value;
 }
 
+// Calculate the CRC of the first eight scratchpad bytes:
+static uint8_t scratchpad_crc(const uint8_t *scratchpad) {
+    uint8_t crc = 0;
+
+    for(int index = 0; index < 8; index++) {
+        uint8_t value = scratchpad[index];
+        for(int bit = 0; bit < 8; bit++) {
+            uint8_t different = (crc ^ value) & 0x01;
+            crc >>= 1;
+            if(different) crc ^= 0x8C;
+            value >>= 1;
+        }
+    }
+
+    return crc;
+}
+/*
+The CRC starts at zero and processes each byte from its least significant bit.
+After each shift, a differing input bit applies 0x8C, the reflected representation
+of the polynomial x^8 + x^5 + x^4 + 1. The result must match scratchpad byte 8.
+*/
+
 // Initialize the temperature sensor:
 esp_err_t temperature_sensor_init(const temperature_sensor_config_t *config) {
     if(config == NULL) return ESP_ERR_INVALID_ARG;
@@ -126,6 +154,9 @@ esp_err_t temperature_sensor_read_celsius(float *temperature_c) {
     for(int index = 0; index < 9; index++) {
         scratchpad[index] = one_wire_read_byte();
     }
+
+    // Reject corrupted data before updating the caller's temperature:
+    if(scratchpad_crc(scratchpad) != scratchpad[8]) return ESP_ERR_INVALID_CRC;
 
     raw_temperature = (int16_t)((scratchpad[1] << 8) | scratchpad[0]);
     *temperature_c = (float)raw_temperature / 16.0f;

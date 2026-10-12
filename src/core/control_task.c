@@ -10,6 +10,7 @@
 #define CONTROL_TASK_STACK_SIZE    3072
 #define CONTROL_TASK_PRIORITY      3
 #define CONTROL_TASK_CORE          1
+#define CONTROL_QUEUE_WAIT_MS      100
 
 // Run the main control logic:
 static void control_task(void *arg) {
@@ -19,19 +20,20 @@ static void control_task(void *arg) {
 
     if(state_machine_init(&state_machine) != ESP_OK) {
         printf("[CONTROL] Failed to initialize state machine\n");
-        vTaskDelete(NULL);
-        return;
     }
 
     printf("[CONTROL] Control task started and waiting for sensor events\n");
 
     while(1) {
-        if(xQueueReceive(sensor_queue, &event, portMAX_DELAY) == pdTRUE) {
+        if(xQueueReceive(sensor_queue, &event, pdMS_TO_TICKS(CONTROL_QUEUE_WAIT_MS)) == pdTRUE) {
             printf("[CONTROL] Received sensor event | type=%d valid=%s\n", event.type, event.valid ? "true" : "false");
 
             if(state_machine_process_sensor_event(&state_machine, &event) != ESP_OK) {
                 printf("[CONTROL] State machine failed to process event | type=%d\n", event.type);
             }
+        }
+        else if(state_machine_retry_shutdown(&state_machine) != ESP_OK) {
+            printf("[CONTROL] Failed to retry actuator shutdown\n");
         }
     }
 }

@@ -89,6 +89,7 @@ static void test_initialization_disables_actuators(void) {
     TEST_ASSERT_FALSE(machine.temperature_valid);
     TEST_ASSERT_FALSE(machine.level_valid);
     TEST_ASSERT_FALSE(machine.luminosity_valid);
+    TEST_ASSERT_FALSE(machine.actuator_fault);
 }
 
 // Keep outputs off when a cold temperature arrives before the first level reading:
@@ -302,6 +303,7 @@ static void test_null_arguments_return_invalid_arg(void) {
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, state_machine_init(NULL));
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, state_machine_process_sensor_event(NULL, &event));
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, state_machine_process_sensor_event(&machine, NULL));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, state_machine_retry_shutdown(NULL));
     TEST_ASSERT_EQUAL_UINT(commands_before, fake_actuators_get_state()->command_count);
 }
 
@@ -309,6 +311,11 @@ static void test_null_arguments_return_invalid_arg(void) {
 static void test_initialization_propagates_driver_failure(void) {
     fake_actuators_fail_next(FAKE_ACTUATOR_HEATER, ESP_FAIL);
     TEST_ASSERT_EQUAL(ESP_FAIL, state_machine_init(&machine));
+    TEST_ASSERT_EQUAL_INT(SYSTEM_STATE_ERROR, machine.state);
+    TEST_ASSERT_TRUE(machine.actuator_fault);
+    TEST_ASSERT_EQUAL(ESP_OK, state_machine_retry_shutdown(&machine));
+    assert_state_and_outputs(SYSTEM_STATE_IDLE, false, false, false);
+    TEST_ASSERT_FALSE(machine.actuator_fault);
 }
 
 // Propagate a failed filling command without claiming the pump was enabled:
@@ -318,6 +325,8 @@ static void test_pump_failure_is_returned_to_caller(void) {
     TEST_ASSERT_EQUAL(ESP_FAIL, send_level(30.0f, true));
     TEST_ASSERT_FALSE(fake_actuators_get_state()->fill_enabled);
     TEST_ASSERT_FALSE(fake_actuators_get_state()->heater_enabled);
+    TEST_ASSERT_EQUAL_INT(SYSTEM_STATE_ERROR, machine.state);
+    TEST_ASSERT_TRUE(machine.actuator_fault);
 }
 
 // Propagate a failed heater command without changing its simulated output:
@@ -326,6 +335,8 @@ static void test_heater_failure_is_returned_to_caller(void) {
     fake_actuators_fail_next(FAKE_ACTUATOR_HEATER, ESP_FAIL);
     TEST_ASSERT_EQUAL(ESP_FAIL, send_temperature(23.0f, true));
     TEST_ASSERT_FALSE(fake_actuators_get_state()->heater_enabled);
+    TEST_ASSERT_EQUAL_INT(SYSTEM_STATE_ERROR, machine.state);
+    TEST_ASSERT_TRUE(machine.actuator_fault);
 }
 
 // Disable heating at low water even if a subsequent pump command fails:
@@ -334,26 +345,74 @@ static void test_low_water_disables_heater_before_pump_failure(void) {
     size_t commands_before = fake_actuators_get_state()->command_count;
     fake_actuators_fail_next(FAKE_ACTUATOR_FILL_PUMP, ESP_FAIL);
     TEST_ASSERT_EQUAL(ESP_FAIL, send_level(30.0f, true));
-    assert_state_and_outputs(SYSTEM_STATE_IDLE, false, false, false);
+    assert_state_and_outputs(SYSTEM_STATE_ERROR, false, false, false);
+    TEST_ASSERT_TRUE(machine.actuator_fault);
 
     const fake_actuator_command_t *first_command = &fake_actuators_get_state()->commands[commands_before];
     TEST_ASSERT_EQUAL_INT(FAKE_ACTUATOR_HEATER, first_command->actuator);
     TEST_ASSERT_FALSE(first_command->enabled);
 }
 
-// Abort pump commands when the heater shutdown itself fails:
-static void test_failed_heater_shutdown_prevents_pump_commands(void) {
+// Continue pump shutdown commands when the heater shutdown itself fails:
+static void test_failed_heater_shutdown_still_attempts_pump_shutdown(void) {
     start_heating();
     size_t commands_before = fake_actuators_get_state()->command_count;
     fake_actuators_fail_next(FAKE_ACTUATOR_HEATER, ESP_FAIL);
     TEST_ASSERT_EQUAL(ESP_FAIL, send_level(30.0f, true));
-    TEST_ASSERT_EQUAL_UINT(commands_before + 1, fake_actuators_get_state()->command_count);
-    TEST_ASSERT_FALSE(fake_actuators_get_state()->fill_enabled);
-    TEST_ASSERT_FALSE(fake_actuators_get_state()->drain_enabled);
+    TEST_ASSERT_EQUAL_UINT(commands_before + 3, fake_actuators_get_state()->command_count);
+    assert_state_and_outputs(SYSTEM_STATE_ERROR, false, false, true);
+    TEST_ASSERT_TRUE(machine.actuator_fault);
 
-    // A later event retries shutdown before the existing idle logic starts filling:
+    // A later event completes shutdown before another event can start filling:
+    TEST_ASSERT_EQUAL(ESP_OK, send_level(30.0f, true));
+    assert_state_and_outputs(SYSTEM_STATE_IDLE, false, false, false);
+    TEST_ASSERT_FALSE(machine.actuator_fault);
+    TEST_ASSERT_EQUAL(ESP_OK, send_temperature(23.0f, true));
+    assert_state_and_outputs(SYSTEM_STATE_FILLING, true, false, false);
+}
+
+// Stop an active fill pump despite a failed heater-off command on entry to error:
+static void test_heater_shutdown_failure_does_not_leave_fill_pump_running(void) {
+    TEST_ASSERT_EQUAL(ESP_OK, send_temperature(27.0f, true));
     TEST_ASSERT_EQUAL(ESP_OK, send_level(30.0f, true));
     assert_state_and_outputs(SYSTEM_STATE_FILLING, true, false, false);
+
+    size_t commands_before = fake_actuators_get_state()->command_count;
+    fake_actuators_fail_next(FAKE_ACTUATOR_HEATER, ESP_FAIL);
+    TEST_ASSERT_EQUAL(ESP_FAIL, send_temperature(0.0f, false));
+    TEST_ASSERT_EQUAL_UINT(commands_before + 3, fake_actuators_get_state()->command_count);
+    assert_state_and_outputs(SYSTEM_STATE_ERROR, false, false, false);
+}
+
+// Stop an active drain pump despite a failed fill-off command on entry to error:
+static void test_fill_shutdown_failure_does_not_leave_drain_pump_running(void) {
+    TEST_ASSERT_EQUAL(ESP_OK, send_temperature(27.0f, true));
+    TEST_ASSERT_EQUAL(ESP_OK, send_level(7.0f, true));
+    assert_state_and_outputs(SYSTEM_STATE_DRAINING, false, true, false);
+
+    size_t commands_before = fake_actuators_get_state()->command_count;
+    fake_actuators_fail_next(FAKE_ACTUATOR_FILL_PUMP, ESP_FAIL);
+    TEST_ASSERT_EQUAL(ESP_FAIL, send_temperature(0.0f, false));
+    TEST_ASSERT_EQUAL_UINT(commands_before + 3, fake_actuators_get_state()->command_count);
+    assert_state_and_outputs(SYSTEM_STATE_ERROR, false, false, false);
+}
+
+// Preserve the first driver error while attempting all shutdown commands in order:
+static void test_complete_shutdown_returns_first_error(void) {
+    size_t commands_before = fake_actuators_get_state()->command_count;
+    fake_actuators_fail_next(FAKE_ACTUATOR_HEATER, ESP_ERR_TIMEOUT);
+    fake_actuators_fail_next(FAKE_ACTUATOR_FILL_PUMP, ESP_ERR_INVALID_STATE);
+    fake_actuators_fail_next(FAKE_ACTUATOR_DRAIN_PUMP, ESP_FAIL);
+    TEST_ASSERT_EQUAL(ESP_ERR_TIMEOUT, state_machine_init(&machine));
+
+    const fake_actuators_state_t *outputs = fake_actuators_get_state();
+    TEST_ASSERT_EQUAL_UINT(commands_before + 3, outputs->command_count);
+    TEST_ASSERT_EQUAL_INT(FAKE_ACTUATOR_HEATER, outputs->commands[commands_before].actuator);
+    TEST_ASSERT_EQUAL_INT(FAKE_ACTUATOR_FILL_PUMP, outputs->commands[commands_before + 1].actuator);
+    TEST_ASSERT_EQUAL_INT(FAKE_ACTUATOR_DRAIN_PUMP, outputs->commands[commands_before + 2].actuator);
+    TEST_ASSERT_FALSE(outputs->commands[commands_before].enabled);
+    TEST_ASSERT_FALSE(outputs->commands[commands_before + 1].enabled);
+    TEST_ASSERT_FALSE(outputs->commands[commands_before + 2].enabled);
 }
 
 // Keep heating disabled if a pump cannot acknowledge its off command:
@@ -362,6 +421,133 @@ static void test_pump_shutdown_failure_prevents_heater_enable(void) {
     fake_actuators_fail_next(FAKE_ACTUATOR_DRAIN_PUMP, ESP_FAIL);
     TEST_ASSERT_EQUAL(ESP_FAIL, send_temperature(23.0f, true));
     TEST_ASSERT_FALSE(fake_actuators_get_state()->heater_enabled);
+}
+
+// Avoid overlapping pumps when filling follows a failed drain shutdown:
+static void test_filling_after_failed_drain_shutdown_does_not_overlap_pumps(void) {
+    TEST_ASSERT_EQUAL(ESP_OK, send_temperature(27.0f, true));
+    TEST_ASSERT_EQUAL(ESP_OK, send_level(7.0f, true));
+    assert_state_and_outputs(SYSTEM_STATE_DRAINING, false, true, false);
+
+    fake_actuators_fail_next(FAKE_ACTUATOR_DRAIN_PUMP, ESP_FAIL);
+    TEST_ASSERT_EQUAL(ESP_FAIL, send_level(30.0f, true));
+    assert_state_and_outputs(SYSTEM_STATE_ERROR, false, true, false);
+    TEST_ASSERT_TRUE(machine.actuator_fault);
+
+    TEST_ASSERT_EQUAL(ESP_OK, state_machine_retry_shutdown(&machine));
+    assert_state_and_outputs(SYSTEM_STATE_IDLE, false, false, false);
+    TEST_ASSERT_EQUAL(ESP_OK, send_temperature(27.0f, true));
+    assert_state_and_outputs(SYSTEM_STATE_FILLING, true, false, false);
+    TEST_ASSERT_FALSE(fake_actuators_get_state()->conflicting_outputs_seen);
+}
+
+// Block every enable command when the incompatible drain pump cannot be disabled:
+static void test_failed_drain_shutdown_prevents_fill_enable(void) {
+    TEST_ASSERT_EQUAL(ESP_OK, send_temperature(27.0f, true));
+    TEST_ASSERT_EQUAL(ESP_OK, send_level(7.0f, true));
+    assert_state_and_outputs(SYSTEM_STATE_DRAINING, false, true, false);
+
+    fake_actuators_fail_next(FAKE_ACTUATOR_DRAIN_PUMP, ESP_FAIL);
+    TEST_ASSERT_EQUAL(ESP_FAIL, send_level(30.0f, true));
+    assert_state_and_outputs(SYSTEM_STATE_ERROR, false, true, false);
+    TEST_ASSERT_TRUE(machine.actuator_fault);
+
+    size_t commands_before = fake_actuators_get_state()->command_count;
+    fake_actuators_fail_next(FAKE_ACTUATOR_DRAIN_PUMP, ESP_FAIL);
+    TEST_ASSERT_EQUAL(ESP_FAIL, send_temperature(27.0f, true));
+
+    const fake_actuators_state_t *outputs = fake_actuators_get_state();
+    TEST_ASSERT_FALSE(outputs->fill_enabled);
+    TEST_ASSERT_TRUE(outputs->drain_enabled);
+    TEST_ASSERT_FALSE(outputs->heater_enabled);
+    for(size_t index = commands_before; index < outputs->command_count; index++) {
+        TEST_ASSERT_FALSE(outputs->commands[index].enabled);
+    }
+    TEST_ASSERT_FALSE(outputs->conflicting_outputs_seen);
+    TEST_ASSERT_EQUAL_INT(SYSTEM_STATE_ERROR, machine.state);
+    TEST_ASSERT_TRUE(machine.actuator_fault);
+}
+
+// Retry repeated heater shutdown failures without enabling another actuator:
+static void test_repeated_shutdown_failures_block_automatic_control(void) {
+    start_heating();
+    fake_actuators_fail_next(FAKE_ACTUATOR_HEATER, ESP_FAIL);
+    TEST_ASSERT_EQUAL(ESP_FAIL, send_temperature(26.0f, true));
+    assert_state_and_outputs(SYSTEM_STATE_ERROR, false, false, true);
+
+    for(int attempt = 0; attempt < 3; attempt++) {
+        size_t commands_before = fake_actuators_get_state()->command_count;
+        fake_actuators_fail_next(FAKE_ACTUATOR_HEATER, ESP_FAIL);
+        TEST_ASSERT_EQUAL(ESP_FAIL, send_level(30.0f, true));
+        assert_state_and_outputs(SYSTEM_STATE_ERROR, false, false, true);
+        TEST_ASSERT_TRUE(machine.actuator_fault);
+
+        const fake_actuators_state_t *outputs = fake_actuators_get_state();
+        for(size_t index = commands_before; index < outputs->command_count; index++) {
+            TEST_ASSERT_FALSE(outputs->commands[index].enabled);
+        }
+    }
+
+    TEST_ASSERT_EQUAL(ESP_OK, state_machine_retry_shutdown(&machine));
+    assert_state_and_outputs(SYSTEM_STATE_IDLE, false, false, false);
+    TEST_ASSERT_FALSE(machine.actuator_fault);
+    TEST_ASSERT_EQUAL(ESP_OK, send_temperature(23.0f, true));
+    assert_state_and_outputs(SYSTEM_STATE_FILLING, true, false, false);
+}
+
+// Keep a failed periodic shutdown pending until a later retry succeeds:
+static void test_shutdown_retry_failure_without_events_remains_pending(void) {
+    start_heating();
+    fake_actuators_fail_next(FAKE_ACTUATOR_HEATER, ESP_FAIL);
+    TEST_ASSERT_EQUAL(ESP_FAIL, send_temperature(26.0f, true));
+
+    fake_actuators_fail_next(FAKE_ACTUATOR_HEATER, ESP_ERR_TIMEOUT);
+    TEST_ASSERT_EQUAL(ESP_ERR_TIMEOUT, state_machine_retry_shutdown(&machine));
+    assert_state_and_outputs(SYSTEM_STATE_ERROR, false, false, true);
+    TEST_ASSERT_TRUE(machine.actuator_fault);
+
+    TEST_ASSERT_EQUAL(ESP_OK, state_machine_retry_shutdown(&machine));
+    assert_state_and_outputs(SYSTEM_STATE_IDLE, false, false, false);
+    TEST_ASSERT_FALSE(machine.actuator_fault);
+}
+
+// Complete shutdown without leaving error while a critical sensor remains invalid:
+static void test_shutdown_recovery_still_requires_valid_critical_sensors(void) {
+    start_heating();
+    fake_actuators_fail_next(FAKE_ACTUATOR_HEATER, ESP_FAIL);
+    TEST_ASSERT_EQUAL(ESP_FAIL, send_temperature(0.0f, false));
+    TEST_ASSERT_TRUE(machine.actuator_fault);
+
+    TEST_ASSERT_EQUAL(ESP_OK, state_machine_retry_shutdown(&machine));
+    assert_state_and_outputs(SYSTEM_STATE_ERROR, false, false, false);
+    TEST_ASSERT_FALSE(machine.actuator_fault);
+    TEST_ASSERT_EQUAL(ESP_OK, send_level(14.0f, true));
+    assert_state_and_outputs(SYSTEM_STATE_ERROR, false, false, false);
+    TEST_ASSERT_EQUAL(ESP_OK, send_temperature(23.0f, true));
+    assert_state_and_outputs(SYSTEM_STATE_IDLE, false, false, false);
+}
+
+// Preserve the triggering error even when emergency shutdown also fails:
+static void test_active_state_error_is_preserved_when_emergency_shutdown_fails(void) {
+    TEST_ASSERT_EQUAL(ESP_OK, send_temperature(27.0f, true));
+    fake_actuators_fail_next(FAKE_ACTUATOR_HEATER, ESP_ERR_INVALID_STATE);
+    fake_actuators_fail_next(FAKE_ACTUATOR_FILL_PUMP, ESP_ERR_TIMEOUT);
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, send_level(30.0f, true));
+    assert_state_and_outputs(SYSTEM_STATE_ERROR, false, false, false);
+    TEST_ASSERT_TRUE(machine.actuator_fault);
+
+    TEST_ASSERT_EQUAL(ESP_OK, state_machine_retry_shutdown(&machine));
+    TEST_ASSERT_FALSE(machine.actuator_fault);
+    assert_state_and_outputs(SYSTEM_STATE_IDLE, false, false, false);
+}
+
+// Leave the actuator drivers untouched when there is no pending shutdown:
+static void test_shutdown_retry_without_fault_does_not_issue_commands(void) {
+    start_heating();
+    size_t commands_before = fake_actuators_get_state()->command_count;
+    TEST_ASSERT_EQUAL(ESP_OK, state_machine_retry_shutdown(&machine));
+    TEST_ASSERT_EQUAL_UINT(commands_before, fake_actuators_get_state()->command_count);
+    assert_state_and_outputs(SYSTEM_STATE_HEATING, false, false, true);
 }
 
 // Execute the suite with test locations reported from this source file:
@@ -390,7 +576,17 @@ void run_state_machine_tests(void) {
     RUN_TEST(test_pump_failure_is_returned_to_caller);
     RUN_TEST(test_heater_failure_is_returned_to_caller);
     RUN_TEST(test_low_water_disables_heater_before_pump_failure);
-    RUN_TEST(test_failed_heater_shutdown_prevents_pump_commands);
+    RUN_TEST(test_failed_heater_shutdown_still_attempts_pump_shutdown);
+    RUN_TEST(test_heater_shutdown_failure_does_not_leave_fill_pump_running);
+    RUN_TEST(test_fill_shutdown_failure_does_not_leave_drain_pump_running);
+    RUN_TEST(test_complete_shutdown_returns_first_error);
     RUN_TEST(test_pump_shutdown_failure_prevents_heater_enable);
+    RUN_TEST(test_filling_after_failed_drain_shutdown_does_not_overlap_pumps);
+    RUN_TEST(test_failed_drain_shutdown_prevents_fill_enable);
+    RUN_TEST(test_repeated_shutdown_failures_block_automatic_control);
+    RUN_TEST(test_shutdown_retry_failure_without_events_remains_pending);
+    RUN_TEST(test_shutdown_recovery_still_requires_valid_critical_sensors);
+    RUN_TEST(test_active_state_error_is_preserved_when_emergency_shutdown_fails);
+    RUN_TEST(test_shutdown_retry_without_fault_does_not_issue_commands);
     UNITY_END();
 }

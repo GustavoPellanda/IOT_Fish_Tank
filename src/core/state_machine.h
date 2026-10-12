@@ -28,6 +28,7 @@ typedef struct {
     bool temperature_valid;     // Last temperature reading validity
     bool level_valid;           // Last level reading validity
     bool luminosity_valid;      // Last luminosity reading validity
+    bool actuator_fault;        // Actuator fault awaiting successful shutdown recovery
 } state_machine_t;
 
 esp_err_t state_machine_init(
@@ -37,6 +38,10 @@ esp_err_t state_machine_init(
 esp_err_t state_machine_process_sensor_event(
     state_machine_t *machine,       // State machine instance to update
     const sensor_event_t *event     // Sensor event received by the control task
+);
+
+esp_err_t state_machine_retry_shutdown(
+    state_machine_t *machine    // State machine with a pending actuator shutdown
 );
 
 const char *state_machine_state_to_string(
