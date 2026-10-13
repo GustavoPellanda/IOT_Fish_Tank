@@ -1,6 +1,7 @@
 #include "test_state_machine.h"
 
 #include <stddef.h>
+#include <math.h>
 
 #include "actuators/heater/heater.h"
 #include "actuators/pumps/pumps.h"
@@ -647,7 +648,7 @@ static void test_new_operation_gets_a_fresh_start_time(void) {
     assert_state_and_outputs(SYSTEM_STATE_ERROR, false, false, false);
 }
 
-// Apply operation limits only to filling, draining, and heating:
+// Leave idle states and MANUAL without an active pump outside operation timeouts:
 static void test_inactive_states_have_no_operation_timeout(void) {
     const system_state_t states[] = {SYSTEM_STATE_IDLE, SYSTEM_STATE_MANUAL, SYSTEM_STATE_ERROR};
     size_t commands_before = fake_actuators_get_state()->command_count;
@@ -746,6 +747,152 @@ static void test_operation_timeout_after_deadline(void) {
     TEST_ASSERT_TRUE(machine.operation_timed_out);
 }
 
+// Submit a manual mode request through the production command handler:
+static esp_err_t set_manual_mode(bool enabled) {
+    control_command_t command = {
+        .type = CONTROL_COMMAND_SET_MANUAL_MODE,
+        .enabled = enabled
+    };
+    return state_machine_process_command(&machine, &command);
+}
+
+// Submit a manual pump request without bypassing state-machine validation:
+static esp_err_t set_manual_pump(manual_pump_state_t pump, bool enabled) {
+    control_command_t command = {
+        .type = CONTROL_COMMAND_SET_PUMP_STATE,
+        .pump = pump,
+        .enabled = enabled
+    };
+    return state_machine_process_command(&machine, &command);
+}
+
+// Require valid critical readings and an explicit mode change before pump commands:
+static void test_manual_requires_valid_readings_and_mode(void) {
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, set_manual_mode(true));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, set_manual_pump(MANUAL_PUMP_FILL, true));
+    TEST_ASSERT_EQUAL(ESP_OK, send_level(14.0f, true));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, set_manual_mode(true));
+    TEST_ASSERT_EQUAL(ESP_OK, send_temperature(27.0f, true));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, set_manual_pump(MANUAL_PUMP_OFF, true));
+    assert_state_and_outputs(SYSTEM_STATE_IDLE, false, false, false);
+}
+
+// Shut down automatic heating and keep sensor updates from restarting it in MANUAL:
+static void test_manual_entry_stops_automatic_outputs(void) {
+    start_heating();
+    TEST_ASSERT_EQUAL(ESP_OK, set_manual_mode(true));
+    assert_state_and_outputs(SYSTEM_STATE_MANUAL, false, false, false);
+    TEST_ASSERT_EQUAL(ESP_OK, send_temperature(22.0f, true));
+    assert_state_and_outputs(SYSTEM_STATE_MANUAL, false, false, false);
+    TEST_ASSERT_FALSE(machine.heater_enabled);
+}
+
+// Stop filling at the full boundary and draining at the empty boundary:
+static void test_manual_pumps_respect_level_limits(void) {
+    TEST_ASSERT_EQUAL(ESP_OK, send_level(14.0f, true));
+    TEST_ASSERT_EQUAL(ESP_OK, send_temperature(27.0f, true));
+    TEST_ASSERT_EQUAL(ESP_OK, set_manual_mode(true));
+    TEST_ASSERT_EQUAL(ESP_OK, set_manual_pump(MANUAL_PUMP_FILL, true));
+    assert_state_and_outputs(SYSTEM_STATE_MANUAL, true, false, false);
+    TEST_ASSERT_EQUAL(ESP_OK, send_level(8.0f, true));
+    assert_state_and_outputs(SYSTEM_STATE_MANUAL, false, false, false);
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, set_manual_pump(MANUAL_PUMP_FILL, true));
+    TEST_ASSERT_EQUAL(ESP_OK, set_manual_pump(MANUAL_PUMP_DRAIN, true));
+    assert_state_and_outputs(SYSTEM_STATE_MANUAL, false, true, false);
+    TEST_ASSERT_EQUAL(ESP_OK, send_level(25.0f, true));
+    assert_state_and_outputs(SYSTEM_STATE_MANUAL, false, false, false);
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, set_manual_pump(MANUAL_PUMP_DRAIN, true));
+}
+
+// Preserve a running manual operation through duplicate requests and sensor events:
+static void test_manual_updates_do_not_extend_timeout(void) {
+    TEST_ASSERT_EQUAL(ESP_OK, send_level(14.0f, true));
+    TEST_ASSERT_EQUAL(ESP_OK, send_temperature(27.0f, true));
+    TEST_ASSERT_EQUAL(ESP_OK, set_manual_mode(true));
+    TEST_ASSERT_EQUAL(ESP_OK, set_manual_pump(MANUAL_PUMP_FILL, true));
+    int64_t started_us = machine.operation_started_us;
+    TEST_ASSERT_EQUAL(ESP_OK, set_manual_mode(true));
+    TEST_ASSERT_EQUAL(ESP_OK, set_manual_pump(MANUAL_PUMP_FILL, true));
+    TEST_ASSERT_EQUAL(ESP_OK, set_manual_pump(MANUAL_PUMP_DRAIN, false));
+    TEST_ASSERT_EQUAL(ESP_OK, send_level(13.0f, true));
+    TEST_ASSERT_TRUE_MESSAGE(machine.operation_started_us == started_us, "Repeated manual requests must preserve the operation start time");
+    assert_state_and_outputs(SYSTEM_STATE_MANUAL, true, false, false);
+}
+
+// Enforce the same five-minute limit for each manual pump and preserve the error latch:
+static void test_manual_pump_timeouts_block_mode_changes(void) {
+    for(manual_pump_state_t pump = MANUAL_PUMP_FILL; pump <= MANUAL_PUMP_DRAIN; pump++) {
+        reset_machine();
+        TEST_ASSERT_EQUAL(ESP_OK, send_level(14.0f, true));
+        TEST_ASSERT_EQUAL(ESP_OK, send_temperature(27.0f, true));
+        TEST_ASSERT_EQUAL(ESP_OK, set_manual_mode(true));
+        TEST_ASSERT_EQUAL(ESP_OK, set_manual_pump(pump, true));
+        int64_t started_us = machine.operation_started_us;
+        TEST_ASSERT_EQUAL(ESP_OK, state_machine_check_operation_timeout(&machine, started_us + 299999999LL));
+        TEST_ASSERT_EQUAL_INT(SYSTEM_STATE_MANUAL, machine.state);
+        TEST_ASSERT_EQUAL(ESP_OK, state_machine_check_operation_timeout(&machine, started_us + 300000000LL));
+        assert_state_and_outputs(SYSTEM_STATE_ERROR, false, false, false);
+        TEST_ASSERT_TRUE(machine.operation_timed_out);
+        TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, set_manual_mode(false));
+        TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, set_manual_mode(true));
+    }
+}
+
+// Shut down manual outputs before returning to the automatic decision flow:
+static void test_manual_exit_resumes_automatic_control(void) {
+    start_heating();
+    TEST_ASSERT_EQUAL(ESP_OK, set_manual_mode(true));
+    TEST_ASSERT_EQUAL(ESP_OK, set_manual_pump(MANUAL_PUMP_DRAIN, true));
+    TEST_ASSERT_EQUAL(ESP_OK, set_manual_mode(false));
+    assert_state_and_outputs(SYSTEM_STATE_IDLE, false, false, false);
+    TEST_ASSERT_EQUAL_INT(MANUAL_PUMP_OFF, machine.manual_pump);
+    TEST_ASSERT_EQUAL(ESP_OK, send_temperature(23.0f, true));
+    assert_state_and_outputs(SYSTEM_STATE_HEATING, false, false, true);
+}
+
+// Prevent a pump change when the previously active relay cannot be disabled:
+static void test_manual_switch_failure_blocks_other_pump(void) {
+    TEST_ASSERT_EQUAL(ESP_OK, send_level(14.0f, true));
+    TEST_ASSERT_EQUAL(ESP_OK, send_temperature(27.0f, true));
+    TEST_ASSERT_EQUAL(ESP_OK, set_manual_mode(true));
+    TEST_ASSERT_EQUAL(ESP_OK, set_manual_pump(MANUAL_PUMP_FILL, true));
+    fake_actuators_fail_next(FAKE_ACTUATOR_FILL_PUMP, ESP_FAIL);
+    TEST_ASSERT_EQUAL(ESP_FAIL, set_manual_pump(MANUAL_PUMP_DRAIN, true));
+    assert_state_and_outputs(SYSTEM_STATE_ERROR, false, false, false);
+    TEST_ASSERT_TRUE(machine.actuator_fault);
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, set_manual_mode(true));
+    TEST_ASSERT_EQUAL(ESP_OK, state_machine_retry_shutdown(&machine));
+    assert_state_and_outputs(SYSTEM_STATE_IDLE, false, false, false);
+}
+
+// Attempt every output shutdown after a failure while entering MANUAL:
+static void test_manual_entry_failure_attempts_complete_shutdown(void) {
+    start_heating();
+    fake_actuators_fail_next(FAKE_ACTUATOR_HEATER, ESP_FAIL);
+    TEST_ASSERT_EQUAL(ESP_FAIL, set_manual_mode(true));
+    assert_state_and_outputs(SYSTEM_STATE_ERROR, false, false, false);
+    TEST_ASSERT_TRUE(machine.actuator_fault);
+}
+
+// Stop a manual pump when a critical sensor reports an invalid or non-finite reading:
+static void test_manual_sensor_faults_stop_outputs(void) {
+    TEST_ASSERT_EQUAL(ESP_OK, send_level(14.0f, true));
+    TEST_ASSERT_EQUAL(ESP_OK, send_temperature(27.0f, true));
+    TEST_ASSERT_EQUAL(ESP_OK, set_manual_mode(true));
+    TEST_ASSERT_EQUAL(ESP_OK, set_manual_pump(MANUAL_PUMP_FILL, true));
+    TEST_ASSERT_EQUAL(ESP_OK, send_level(14.0f, false));
+    assert_state_and_outputs(SYSTEM_STATE_ERROR, false, false, false);
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, set_manual_mode(true));
+
+    reset_machine();
+    TEST_ASSERT_EQUAL(ESP_OK, send_level(14.0f, true));
+    TEST_ASSERT_EQUAL(ESP_OK, send_temperature(27.0f, true));
+    TEST_ASSERT_EQUAL(ESP_OK, set_manual_mode(true));
+    TEST_ASSERT_EQUAL(ESP_OK, set_manual_pump(MANUAL_PUMP_DRAIN, true));
+    TEST_ASSERT_EQUAL(ESP_OK, send_temperature(NAN, true));
+    assert_state_and_outputs(SYSTEM_STATE_ERROR, false, false, false);
+}
+
 // Execute the suite with test locations reported from this source file:
 void run_state_machine_tests(void) {
     UNITY_BEGIN();
@@ -795,5 +942,14 @@ void run_state_machine_tests(void) {
     RUN_TEST(test_initialization_clears_operation_timeout);
     RUN_TEST(test_invalid_operation_check_times_do_not_change_outputs);
     RUN_TEST(test_operation_timeout_after_deadline);
+    RUN_TEST(test_manual_requires_valid_readings_and_mode);
+    RUN_TEST(test_manual_entry_stops_automatic_outputs);
+    RUN_TEST(test_manual_pumps_respect_level_limits);
+    RUN_TEST(test_manual_updates_do_not_extend_timeout);
+    RUN_TEST(test_manual_pump_timeouts_block_mode_changes);
+    RUN_TEST(test_manual_exit_resumes_automatic_control);
+    RUN_TEST(test_manual_switch_failure_blocks_other_pump);
+    RUN_TEST(test_manual_entry_failure_attempts_complete_shutdown);
+    RUN_TEST(test_manual_sensor_faults_stop_outputs);
     UNITY_END();
 }

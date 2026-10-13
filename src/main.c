@@ -2,6 +2,8 @@
 
 #include "actuators/heater/heater.h"
 #include "actuators/pumps/pumps.h"
+#include "communication/wifi/wifi_manager.h"
+#include "communication/web_server/web_server.h"
 #include "core/control_task.h"
 #include "core/sensor_tasks.h"
 #include "esp_check.h"
@@ -22,6 +24,9 @@
 #define PUMP_DRAIN_GPIO            GPIO_NUM_27
 #define HEATER_RELAY_GPIO          GPIO_NUM_25
 #define RELAY_ACTIVE_LEVEL         true
+#define DASHBOARD_WIFI_SSID        "TankController"
+#define DASHBOARD_WIFI_PASSWORD    "TankControl32"
+#define DASHBOARD_WIFI_CHANNEL     1
 
 // Initialize the sensor drivers:
 static esp_err_t init_sensors(void) {
@@ -64,6 +69,21 @@ static esp_err_t init_actuators(void) {
     return ESP_OK;
 }
 
+// Initialize Wi-Fi and the dashboard while preserving control on communication failures:
+static void init_communication(void) {
+    wifi_manager_config_t wifi_config = {
+        .ssid = DASHBOARD_WIFI_SSID,
+        .password = DASHBOARD_WIFI_PASSWORD,
+        .channel = DASHBOARD_WIFI_CHANNEL,
+        .max_clients = 1
+    };
+    esp_err_t communication_result = wifi_manager_start(&wifi_config);
+    if(communication_result == ESP_OK) communication_result = web_server_start();
+    if(communication_result != ESP_OK) {
+        printf("[MAIN] Dashboard unavailable | error=%s | automatic control remains active\n", esp_err_to_name(communication_result));
+    }
+}
+
 // Initialize the firmware base:
 void app_main(void) {
     QueueHandle_t sensor_queue;
@@ -72,4 +92,5 @@ void app_main(void) {
     ESP_ERROR_CHECK(init_actuators());
     ESP_ERROR_CHECK(control_task_start(&sensor_queue));
     ESP_ERROR_CHECK(sensor_tasks_start(sensor_queue));
+    init_communication();
 }

@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Fish Tank Controller</title>
+
+<style>
+
+:root
+{
+    --bg: #101418;
+    --card: #1b222b;
+    --card-border: #2b3542;
+
+    --text: #e8eef5;
+    --text-secondary: #9aa7b5;
+
+    --accent: #4ea1ff;
+    --good: #35c46b;
+    --warn: #ffb020;
+    --danger: #ff5d5d;
+
+    --shadow:
+        0 4px 12px rgba(0,0,0,0.25);
+}
+
+*
+{
+    box-sizing: border-box;
+}
+
+body
+{
+    margin: 0;
+    padding: 24px;
+
+    background: var(--bg);
+    color: var(--text);
+
+    font-family:
+        Inter,
+        system-ui,
+        sans-serif;
+}
+
+.container
+{
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+header
+{
+    margin-bottom: 32px;
+}
+
+h1
+{
+    margin: 0;
+    font-size: 2rem;
+    font-weight: 700;
+}
+
+.subtitle
+{
+    margin-top: 8px;
+    color: var(--text-secondary);
+}
+
+.section
+{
+    margin-bottom: 32px;
+}
+
+.section-title
+{
+    margin-bottom: 16px;
+
+    font-size: 0.95rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+
+    color: var(--text-secondary);
+}
+
+.grid
+{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+}
+
+.card
+{
+    background: var(--card);
+    border: 1px solid var(--card-border);
+
+    border-radius: 16px;
+
+    padding: 20px;
+
+    box-shadow: var(--shadow);
+}
+
+.metric-label
+{
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+.metric-value
+{
+    margin-top: 12px;
+
+    font-size: 2rem;
+    font-weight: 700;
+}
+
+.metric-unit
+{
+    font-size: 1rem;
+    color: var(--text-secondary);
+}
+
+.status
+{
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+
+    margin-top: 12px;
+
+    font-size: 0.9rem;
+}
+
+.status-dot
+{
+    width: 10px;
+    height: 10px;
+
+    border-radius: 50%;
+}
+
+.status-good
+{
+    background: var(--good);
+}
+
+.status-warn
+{
+    background: var(--warn);
+}
+
+.status-danger
+{
+    background: var(--danger);
+}
+
+.control-row
+{
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+
+    padding: 14px 0;
+
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+.control-row:last-child
+{
+    border-bottom: none;
+}
+
+.switch
+{
+    position: relative;
+
+    width: 54px;
+    height: 28px;
+}
+
+.switch input
+{
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.slider
+{
+    position: absolute;
+    inset: 0;
+
+    cursor: pointer;
+
+    background: #4b5563;
+
+    border-radius: 999px;
+
+    transition: 0.2s;
+}
+
+.slider::before
+{
+    content: "";
+
+    position: absolute;
+
+    width: 22px;
+    height: 22px;
+
+    left: 3px;
+    top: 3px;
+
+    border-radius: 50%;
+
+    background: white;
+
+    transition: 0.2s;
+}
+
+input:checked + .slider
+{
+    background: var(--accent);
+}
+
+input:checked + .slider::before
+{
+    transform: translateX(26px);
+}
+
+.log
+{
+    font-family: monospace;
+
+    font-size: 0.9rem;
+
+    color: #c9d4df;
+
+    max-height: 220px;
+    overflow-y: auto;
+
+    line-height: 1.5;
+}
+
+.footer
+{
+    margin-top: 48px;
+
+    text-align: center;
+    color: var(--text-secondary);
+
+    font-size: 0.85rem;
+}
+
+@media (max-width: 600px)
+{
+    body
+    {
+        padding: 16px;
+    }
+
+    .metric-value
+    {
+        font-size: 1.6rem;
+    }
+}
+
+input:disabled + .slider
+{
+    cursor: default;
+    opacity: 0.45;
+}
+
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <header>
+        <h1>Fish Tank Controller</h1>
+        <div class="subtitle">
+            Fish tank environment monitoring and actuator control
+        </div>
+        <div id="connectionStatus" class="subtitle">Connecting...</div>
+    </header>
+
+    <section class="section">
+        <div class="section-title">
+            Telemetry
+        </div>
+
+        <div class="grid">
+
+            <div class="card">
+                <div class="metric-label">
+                    Water Temperature
+                </div>
+
+                <div class="metric-value">
+                    <span id="temp">--</span>
+                    <span class="metric-unit">°C</span>
+                </div>
+
+                <div class="status">
+                    <div id="tempDot" class="status-dot status-warn"></div>
+                    <span id="tempStatus">Waiting</span>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="metric-label">
+                    Distance to Water
+                </div>
+
+                <div class="metric-value">
+                    <span id="dist">--</span>
+                    <span class="metric-unit">cm</span>
+                </div>
+
+                <div class="status">
+                    <div id="distDot" class="status-dot status-warn"></div>
+                    <span id="distStatus">Waiting</span>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="metric-label">
+                    Luminosity
+                </div>
+
+                <div class="metric-value">
+                    <span id="lum">--</span>
+                    <span class="metric-unit">ADC</span>
+                </div>
+
+                <div class="status">
+                    <div id="lumDot" class="status-dot status-warn"></div>
+                    <span id="lumStatus">Waiting</span>
+                </div>
+            </div>
+
+        </div>
+    </section>
+
+    <section class="section">
+
+        <div class="section-title">
+            Actuator Control
+        </div>
+
+        <div class="card">
+
+            <div class="control-row">
+                <div>Manual Mode</div>
+                <label class="switch">
+                    <input type="checkbox" id="manualMode" disabled
+                           onchange="setManualMode(this.checked)">
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+            <div class="control-row">
+                <div>
+                    Pump Fill
+                </div>
+
+                <label class="switch">
+                    <input
+                        type="checkbox"
+                        id="pumpFill"
+                        disabled
+                        onchange="setPump(1, this.checked)"
+                    >
+
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+            <div class="control-row">
+                <div>
+                    Pump Drain
+                </div>
+
+                <label class="switch">
+                    <input
+                        type="checkbox"
+                        id="pumpDrain"
+                        disabled
+                        onchange="setPump(2, this.checked)"
+                    >
+
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+        </div>
+    </section>
+
+    <section class="section">
+
+        <div class="section-title">
+            System State
+        </div>
+
+        <div class="grid">
+
+            <div class="card">
+                <div class="metric-label">Operating State</div>
+                <div id="systemState" class="metric-value" style="font-size:1.4rem;">--</div>
+            </div>
+
+            <div class="card">
+                <div class="metric-label">
+                    Pump Relay Command
+                </div>
+
+                <div
+                    id="pumpState"
+                    class="metric-value"
+                    style="font-size:1.4rem;"
+                >
+                    OFF
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="metric-label">
+                    Heater Relay Command
+                </div>
+
+                <div
+                    id="heaterState"
+                    class="metric-value"
+                    style="font-size:1.4rem;"
+                >
+                    OFF
+                </div>
+            </div>
+
+        </div>
+
+    </section>
+
+    <section class="section">
+
+        <div class="section-title">
+            Event Log
+        </div>
+
+        <div class="card">
+            <div id="log" class="log">
+                Waiting for firmware status
+            </div>
+        </div>
+
+    </section>
+
+    <div class="footer">
+        Fish Tank Controller
+    </div>
+
+</div>
+
+<script>
+
+// Match the pump command encoding returned by the telemetry endpoint:
+const PUMP_LABELS = ["OFF", "FILL", "DRAIN"];
+const state = {connected: false, manual: false, pump: 0, heater: false, fault: false,
+               system: "--", lastCommandId: 0, lastCommandResult: 0, lastCommandError: ""};
+let commandPending = false;
+let telemetryRequest = null;
+let lastTelemetryError = null;
+
+// Keep a bounded browser log without inserting messages as HTML:
+function log(message)
+{
+    const element = document.getElementById("log");
+    const entry = document.createElement("div");
+    entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+    element.prepend(entry);
+    while (element.children.length > 100) element.lastElementChild.remove();
+}
+
+function setStatus(dotId, textId, level, text)
+{
+    document.getElementById(dotId).className = `status-dot status-${level}`;
+    document.getElementById(textId).textContent = text;
+}
+
+// Keep controls aligned with firmware state rather than optimistic local toggles:
+function updateControls()
+{
+    const unavailable = !state.connected || commandPending || state.fault || state.system === "ERROR";
+    document.getElementById("manualMode").checked = state.manual;
+    document.getElementById("manualMode").disabled = unavailable;
+    document.getElementById("pumpFill").checked = state.pump === 1;
+    document.getElementById("pumpDrain").checked = state.pump === 2;
+    document.getElementById("pumpFill").disabled = unavailable || !state.manual;
+    document.getElementById("pumpDrain").disabled = unavailable || !state.manual;
+}
+/*
+Switch positions come from the last firmware snapshot, even while a request is
+pending. Changing a checkbox therefore does not imply that the controller has
+already changed mode or energized a relay. Pump controls require confirmed MANUAL.
+*/
+
+// Bound HTTP requests so connection failures do not leave a command pending forever:
+async function requestWithTimeout(url, options = {})
+{
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    try
+    {
+        const response = await fetch(url, {...options, cache: "no-store", signal: controller.signal});
+        const body = await response.text();
+        if (!response.ok) throw new Error(body || `HTTP ${response.status}`);
+        return body;
+    }
+    finally
+    {
+        clearTimeout(timer);
+    }
+}
+/*
+The abort timer covers both receiving the response and reading its body. The
+finally block clears it on success or failure so finished requests leave no
+pending timer. HTTP error bodies become log messages instead of successful replies.
+*/
+
+// Show invalid or stale data without replacing it with a misleading zero:
+function updateMetric(xml, valueTag, elementId, dotId, textId, decimals, maxAgeMs)
+{
+    const value = Number(readTag(xml, valueTag));
+    const valid = readTag(xml, `${valueTag}_VALID`) === "1";
+    const age = Number(readTag(xml, `${valueTag}_AGE_MS`));
+    const fresh = Number.isFinite(age) && age >= 0 && age <= maxAgeMs;
+    document.getElementById(elementId).textContent = valid && fresh && Number.isFinite(value)
+        ? value.toFixed(decimals) : "--";
+    setStatus(dotId, textId, valid && fresh ? "good" : "warn",
+              age < 0 ? "Waiting" : !valid ? "Unavailable" : !fresh ? "Stale" : "Valid");
+}
+/*
+Validity comes from the firmware; freshness is a separate display check against
+the reported event age. An age of -1 means no event has arrived yet. These checks
+hide unavailable values without converting distance or raw ADC data to percentages.
+The browser's freshness limit does not change firmware control or safety rules.
+*/
+
+// Require each telemetry field before using its value:
+function readTag(xml, name)
+{
+    const element = xml.getElementsByTagName(name)[0];
+    if (!element) throw new Error(`Missing telemetry field: ${name}`);
+    return element.textContent;
+}
+
+// Read a firmware snapshot and update monitoring and command results together:
+async function readTelemetry()
+{
+    try
+    {
+        const body = await requestWithTimeout("/xml");
+        const xml = new DOMParser().parseFromString(body, "text/xml");
+        if (xml.getElementsByTagName("parsererror").length) throw new Error("Invalid telemetry response");
+        // Update sensor cards using their validity flags and event ages:
+        updateMetric(xml, "TEMP", "temp", "tempDot", "tempStatus", 1, 6000);
+        updateMetric(xml, "DIST", "dist", "distDot", "distStatus", 1, 4000);
+        updateMetric(xml, "LUM", "lum", "lumDot", "lumStatus", 0, 6000);
+        // Refresh the local snapshot and the latest command execution result:
+        const previousSystem = state.system;
+        state.manual = readTag(xml, "MANUAL") === "1";
+        state.pump = Number(readTag(xml, "PUMP"));
+        state.heater = readTag(xml, "HEATER") === "1";
+        state.system = readTag(xml, "STATE");
+        state.fault = readTag(xml, "ACTUATOR_FAULT") === "1";
+        state.lastCommandId = Number(readTag(xml, "LAST_COMMAND_ID"));
+        state.lastCommandResult = Number(readTag(xml, "LAST_COMMAND_RESULT"));
+        state.lastCommandError = readTag(xml, "LAST_COMMAND_ERROR");
+        // Present operating state and faults before enabling dashboard controls:
+        document.getElementById("systemState").textContent = state.system;
+        document.getElementById("pumpState").textContent = state.fault ? "UNKNOWN" : PUMP_LABELS[state.pump] ?? "UNKNOWN";
+        document.getElementById("heaterState").textContent = state.fault ? "UNKNOWN" : state.heater ? "ON" : "OFF";
+        document.getElementById("connectionStatus").textContent =
+            readTag(xml, "OPERATION_TIMED_OUT") === "1" ? "Operation timed out — restart required" :
+            state.fault ? "Actuator fault — shutdown pending" :
+            state.system === "ERROR" ? "Sensor fault — controls unavailable" : "Connected";
+        if (!state.connected) log("Connected to controller");
+        if (state.system !== previousSystem && previousSystem !== "--") log(`Operating state: ${previousSystem} -> ${state.system}`);
+        lastTelemetryError = null;
+        state.connected = true;
+        updateControls();
+        return true;
+    }
+    catch (error)
+    {
+        // Clear displayed values and disable controls when the snapshot is unavailable:
+        // Record the first failure or a new cause without repeating every failed poll:
+        if (error.message !== lastTelemetryError) log(`Communication error: ${error.message}`);
+        lastTelemetryError = error.message;
+        state.connected = false;
+        document.getElementById("connectionStatus").textContent = "Communication unavailable";
+        document.getElementById("systemState").textContent = "--";
+        document.getElementById("pumpState").textContent = "--";
+        document.getElementById("heaterState").textContent = "--";
+        for (const [id, dot, status] of [["temp", "tempDot", "tempStatus"],
+                                      ["dist", "distDot", "distStatus"], ["lum", "lumDot", "lumStatus"]])
+        {
+            document.getElementById(id).textContent = "--";
+            setStatus(dot, status, "warn", "Unavailable");
+        }
+        updateControls();
+        return false;
+    }
+}
+/*
+Relay displays reflect software commands reported by the controller. An actuator
+fault changes them to UNKNOWN because the firmware cannot confirm safe shutdown;
+there is no physical pump or heater feedback in this dashboard.
+
+On a failed read, the page clears its displays and blocks new user commands.
+This only changes browser state: it neither cancels an accepted command nor
+requests automatic mode. Wi-Fi disconnect handling remains a firmware concern.
+*/
+
+// Share a pending telemetry request instead of opening overlapping polls:
+function fetchTelemetry()
+{
+    if (!telemetryRequest)
+    {
+        telemetryRequest = readTelemetry().finally(() => {telemetryRequest = null;});
+    }
+    return telemetryRequest;
+}
+/*
+Periodic polling and command confirmation share the same in-flight promise.
+The finally callback clears that reference after completion, allowing the next
+caller to start a fresh request without overlapping the current one.
+*/
+
+// Send one request at a time and distinguish queue acceptance from execution:
+async function sendCommand(url, body, description)
+{
+    if (commandPending) {updateControls(); return;}
+    commandPending = true;
+    updateControls();
+    try
+    {
+        // Obtain the identifier assigned when the control queue accepts the request:
+        const accepted = JSON.parse(await requestWithTimeout(url, {
+            method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)
+        }));
+        if (accepted.accepted !== true || !Number.isInteger(accepted.commandId)) throw new Error("Invalid command response");
+        // Observe execution through telemetry without resending the accepted command:
+        for (let attempt = 0; attempt < 10; attempt++)
+        {
+            const available = await fetchTelemetry();
+            if (!available) break;
+            if (state.lastCommandId === accepted.commandId)
+            {
+                if (state.lastCommandResult !== 0) throw new Error(`Rejected: ${state.lastCommandError}`);
+                log(`${description}: applied by controller`);
+                return;
+            }
+            if (state.lastCommandId > accepted.commandId) throw new Error("Another request replaced the command result");
+            await new Promise(resolve => setTimeout(resolve, 200));
+        }
+        throw new Error("Execution not confirmed; check controller state before retrying");
+    }
+    catch (error)
+    {
+        log(`${description}: ${error.message}`);
+    }
+    finally
+    {
+        // Refresh switch positions before allowing another request from this page:
+        await fetchTelemetry();
+        commandPending = false;
+        updateControls();
+    }
+}
+/*
+HTTP 202 acknowledges queue acceptance, so commandPending keeps this page from
+sending another command while it observes the returned identifier. A matching
+LAST_COMMAND_ID with result 0 confirms execution; another result reports rejection.
+
+Telemetry exposes only the most recently processed command. A newer identifier
+can therefore replace this request's result, for example when another tab sends
+a command. Losing confirmation does not prove the request failed or undo its
+effects, so the page logs the uncertainty and never retries the POST automatically.
+*/
+
+// Request an operating mode change through the dashboard command endpoint:
+function setManualMode(enabled)
+{
+    return sendCommand("/controlMode", {manual: enabled}, enabled ? "Manual mode" : "Automatic mode");
+}
+
+// Request a pump state while leaving interlocks and relay switching to the firmware:
+function setPump(pumpId, enabled)
+{
+    return sendCommand("/controlPump", {pumpId, state: enabled}, `Pump ${pumpId} ${enabled ? "ON" : "OFF"}`);
+}
+
+fetchTelemetry();
+setInterval(fetchTelemetry, 2000);
+
+</script>
+
+</body>
+</html>

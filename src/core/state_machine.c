@@ -1,6 +1,7 @@
 #include "state_machine.h"
 
 #include <stdbool.h>
+#include <math.h>
 #include <stdio.h>
 
 #include "actuators/heater/heater.h"
@@ -48,29 +49,49 @@ static void set_state(state_machine_t *machine, system_state_t next_state, const
         reason
     );
     machine->state = next_state;
+    if(next_state != SYSTEM_STATE_MANUAL) machine->manual_pump = MANUAL_PUMP_OFF;
     if(next_state == SYSTEM_STATE_FILLING || next_state == SYSTEM_STATE_DRAINING || next_state == SYSTEM_STATE_HEATING) {
         machine->operation_started_us = esp_timer_get_time();
     }
 }
 
+// Apply a pump output and record successful relay commands:
+static esp_err_t set_pump_output(state_machine_t *machine, pump_id_t pump, bool enabled) {
+    esp_err_t result = pumps_set_state(pump, enabled);
+    if(result == ESP_OK) {
+        if(pump == PUMP_FILL) machine->fill_enabled = enabled;
+        else machine->drain_enabled = enabled;
+    }
+
+    return result;
+}
+
+// Apply the heater output and record successful relay commands:
+static esp_err_t set_heater_output(state_machine_t *machine, bool enabled) {
+    esp_err_t result = heater_set_enabled(enabled);
+    if(result == ESP_OK) machine->heater_enabled = enabled;
+
+    return result;
+}
+
 // Attempt every shutdown command and return the first failure:
-static esp_err_t shutdown_outputs(void) {
-    esp_err_t result = heater_set_enabled(false);
-    esp_err_t error = pumps_set_state(PUMP_FILL, false);
+static esp_err_t shutdown_outputs(state_machine_t *machine) {
+    esp_err_t result = set_heater_output(machine, false);
+    esp_err_t error = set_pump_output(machine, PUMP_FILL, false);
     if(result == ESP_OK) result = error;
-    error = pumps_set_state(PUMP_DRAIN, false);
+    error = set_pump_output(machine, PUMP_DRAIN, false);
     if(result == ESP_OK) result = error;
 
     return result;
 }
 
 // Apply the actuator output requested by the current state:
-static esp_err_t apply_outputs_for_state(system_state_t state) {
+static esp_err_t apply_outputs_for_state(state_machine_t *machine) {
     bool fill_enabled = false;
     bool drain_enabled = false;
     bool heater_enabled = false;
 
-    switch(state) {
+    switch(machine->state) {
         case SYSTEM_STATE_FILLING:
             fill_enabled = true;
             break;
@@ -80,8 +101,11 @@ static esp_err_t apply_outputs_for_state(system_state_t state) {
         case SYSTEM_STATE_HEATING:
             heater_enabled = true;
             break;
-        case SYSTEM_STATE_IDLE:
         case SYSTEM_STATE_MANUAL:
+            fill_enabled = machine->manual_pump == MANUAL_PUMP_FILL;
+            drain_enabled = machine->manual_pump == MANUAL_PUMP_DRAIN;
+            break;
+        case SYSTEM_STATE_IDLE:
         case SYSTEM_STATE_ERROR:
             break;
     }
@@ -93,17 +117,17 @@ static esp_err_t apply_outputs_for_state(system_state_t state) {
         heater_enabled ? "ON" : "OFF"
     );
 
-    if(!fill_enabled && !drain_enabled && !heater_enabled) return shutdown_outputs();
+    if(!fill_enabled && !drain_enabled && !heater_enabled) return shutdown_outputs(machine);
 
     // Disable incompatible outputs before enabling the requested actuator:
-    if(!heater_enabled) ESP_RETURN_ON_ERROR(heater_set_enabled(false), "state_machine", "failed to disable heater");
-    if(!fill_enabled) ESP_RETURN_ON_ERROR(pumps_set_state(PUMP_FILL, false), "state_machine", "failed to disable fill pump");
-    if(!drain_enabled) ESP_RETURN_ON_ERROR(pumps_set_state(PUMP_DRAIN, false), "state_machine", "failed to disable drain pump");
+    if(!heater_enabled) ESP_RETURN_ON_ERROR(set_heater_output(machine, false), "state_machine", "failed to disable heater");
+    if(!fill_enabled) ESP_RETURN_ON_ERROR(set_pump_output(machine, PUMP_FILL, false), "state_machine", "failed to disable fill pump");
+    if(!drain_enabled) ESP_RETURN_ON_ERROR(set_pump_output(machine, PUMP_DRAIN, false), "state_machine", "failed to disable drain pump");
 
     // Enable the requested actuator only after every required shutdown succeeds:
-    if(fill_enabled) ESP_RETURN_ON_ERROR(pumps_set_state(PUMP_FILL, true), "state_machine", "failed to enable fill pump");
-    if(drain_enabled) ESP_RETURN_ON_ERROR(pumps_set_state(PUMP_DRAIN, true), "state_machine", "failed to enable drain pump");
-    if(heater_enabled) ESP_RETURN_ON_ERROR(heater_set_enabled(true), "state_machine", "failed to enable heater");
+    if(fill_enabled) ESP_RETURN_ON_ERROR(set_pump_output(machine, PUMP_FILL, true), "state_machine", "failed to enable fill pump");
+    if(drain_enabled) ESP_RETURN_ON_ERROR(set_pump_output(machine, PUMP_DRAIN, true), "state_machine", "failed to enable drain pump");
+    if(heater_enabled) ESP_RETURN_ON_ERROR(set_heater_output(machine, true), "state_machine", "failed to enable heater");
 
     return ESP_OK;
 }
@@ -111,13 +135,13 @@ static esp_err_t apply_outputs_for_state(system_state_t state) {
 // Record driver failures and request complete shutdown after an active-state error:
 static esp_err_t apply_state_outputs(state_machine_t *machine) {
     system_state_t requested_state = machine->state;
-    esp_err_t result = apply_outputs_for_state(requested_state);
+    esp_err_t result = apply_outputs_for_state(machine);
 
     if(result != ESP_OK) {
         machine->actuator_fault = true;
         set_state(machine, SYSTEM_STATE_ERROR, "actuator command failed");
-        if(requested_state == SYSTEM_STATE_FILLING || requested_state == SYSTEM_STATE_DRAINING || requested_state == SYSTEM_STATE_HEATING) {
-            shutdown_outputs();
+        if(requested_state == SYSTEM_STATE_FILLING || requested_state == SYSTEM_STATE_DRAINING || requested_state == SYSTEM_STATE_HEATING || requested_state == SYSTEM_STATE_MANUAL) {
+            shutdown_outputs(machine);
         }
     }
 
@@ -253,12 +277,17 @@ static void handle_heating_state(state_machine_t *machine) {
 
 // Evaluate the manual state transitions:
 static void handle_manual_state(state_machine_t *machine) {
-    if(has_critical_sensor_fault(machine)) {
+    if(has_critical_sensor_fault(machine) || !isfinite(machine->temperature_c) || !isfinite(machine->level_cm) || machine->level_cm < 0.0f) {
         set_state(machine, SYSTEM_STATE_ERROR, "critical sensor invalid while manual mode is active");
         return;
     }
 
-    printf("[STATE] Staying in MANUAL | manual command handling is not implemented yet\n");
+    if((machine->manual_pump == MANUAL_PUMP_FILL && machine->level_cm <= LEVEL_FULL_DISTANCE_CM) ||
+       (machine->manual_pump == MANUAL_PUMP_DRAIN && machine->level_cm >= LEVEL_EMPTY_DISTANCE_CM)) {
+        machine->manual_pump = MANUAL_PUMP_OFF;
+        machine->operation_started_us = 0;
+        printf("[STATE] Manual pump stopped at the water level limit\n");
+    }
 }
 
 // Evaluate the error state transitions:
@@ -324,6 +353,10 @@ esp_err_t state_machine_init(state_machine_t *machine) {
     machine->actuator_fault = false;
     machine->operation_started_us = 0;
     machine->operation_timed_out = false;
+    machine->manual_pump = MANUAL_PUMP_OFF;
+    machine->fill_enabled = false;
+    machine->drain_enabled = false;
+    machine->heater_enabled = false;
 
     printf("[STATE] Initialized state machine | initial_state=%s\n", state_machine_state_to_string(machine->state));
 
@@ -347,7 +380,7 @@ esp_err_t state_machine_retry_shutdown(state_machine_t *machine) {
     if(machine == NULL) return ESP_ERR_INVALID_ARG;
     if(!machine->actuator_fault) return ESP_OK;
 
-    esp_err_t result = shutdown_outputs();
+    esp_err_t result = shutdown_outputs(machine);
     if(result != ESP_OK) return result;
 
     machine->actuator_fault = false;
@@ -372,6 +405,10 @@ esp_err_t state_machine_check_operation_timeout(state_machine_t *machine, int64_
         case SYSTEM_STATE_HEATING:
             timeout_us = HEATING_TIMEOUT_US;
             break;
+        case SYSTEM_STATE_MANUAL:
+            if(machine->manual_pump == MANUAL_PUMP_OFF) return ESP_OK;
+            timeout_us = machine->manual_pump == MANUAL_PUMP_FILL ? FILLING_TIMEOUT_US : DRAINING_TIMEOUT_US;
+            break;
         default:
             return ESP_OK;
     }
@@ -380,6 +417,57 @@ esp_err_t state_machine_check_operation_timeout(state_machine_t *machine, int64_
 
     machine->operation_timed_out = true;
     set_state(machine, SYSTEM_STATE_ERROR, "operation duration limit reached");
+
+    return apply_state_outputs(machine);
+}
+
+// Validate a manual request and apply it without bypassing fault supervision:
+esp_err_t state_machine_process_command(state_machine_t *machine, const control_command_t *command) {
+    if(machine == NULL || command == NULL) return ESP_ERR_INVALID_ARG;
+    if(command->type != CONTROL_COMMAND_SET_MANUAL_MODE && command->type != CONTROL_COMMAND_SET_PUMP_STATE) return ESP_ERR_INVALID_ARG;
+    if(command->type == CONTROL_COMMAND_SET_PUMP_STATE && command->pump != MANUAL_PUMP_FILL && command->pump != MANUAL_PUMP_DRAIN) return ESP_ERR_INVALID_ARG;
+
+    esp_err_t result = state_machine_check_operation_timeout(machine, esp_timer_get_time());
+    if(result != ESP_OK) return result;
+    if(machine->actuator_fault || machine->operation_timed_out || machine->state == SYSTEM_STATE_ERROR) return ESP_ERR_INVALID_STATE;
+
+    if(command->type == CONTROL_COMMAND_SET_MANUAL_MODE) {
+        if(!command->enabled) {
+            if(machine->state != SYSTEM_STATE_MANUAL) return ESP_OK;
+            set_state(machine, SYSTEM_STATE_IDLE, "manual mode disabled");
+            return apply_state_outputs(machine);
+        }
+        if(!has_required_sensor_data(machine) || has_critical_sensor_fault(machine) || !isfinite(machine->temperature_c) || !isfinite(machine->level_cm) || machine->level_cm < 0.0f) return ESP_ERR_INVALID_STATE;
+        if(machine->state == SYSTEM_STATE_MANUAL) return ESP_OK;
+
+        machine->manual_pump = MANUAL_PUMP_OFF;
+        set_state(machine, SYSTEM_STATE_MANUAL, "manual mode enabled");
+        return apply_state_outputs(machine);
+    }
+    if(machine->state != SYSTEM_STATE_MANUAL) return ESP_ERR_INVALID_STATE;
+
+    manual_pump_state_t previous_pump = machine->manual_pump;
+    handle_manual_state(machine);
+    if(machine->state == SYSTEM_STATE_ERROR) {
+        result = apply_state_outputs(machine);
+        return result == ESP_OK ? ESP_ERR_INVALID_STATE : result;
+    }
+    if(machine->manual_pump != previous_pump) {
+        result = apply_state_outputs(machine);
+        if(result != ESP_OK) return result;
+    }
+    if(command->enabled) {
+        if(command->pump == MANUAL_PUMP_FILL && machine->level_cm <= LEVEL_FULL_DISTANCE_CM) return ESP_ERR_INVALID_STATE;
+        if(command->pump == MANUAL_PUMP_DRAIN && machine->level_cm >= LEVEL_EMPTY_DISTANCE_CM) return ESP_ERR_INVALID_STATE;
+        if(machine->manual_pump != command->pump) {
+            machine->manual_pump = command->pump;
+            machine->operation_started_us = esp_timer_get_time();
+        }
+    }
+    else if(machine->manual_pump == command->pump) {
+        machine->manual_pump = MANUAL_PUMP_OFF;
+        machine->operation_started_us = 0;
+    }
 
     return apply_state_outputs(machine);
 }
