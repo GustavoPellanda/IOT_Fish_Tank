@@ -11,20 +11,19 @@
 
 :root
 {
-    --bg: #101418;
-    --card: #1b222b;
-    --card-border: #2b3542;
+    --bg: #111315;
+    --card: #1a1d20;
+    --card-border: #353a40;
 
-    --text: #e8eef5;
-    --text-secondary: #9aa7b5;
+    --text: #eceeef;
+    --text-secondary: #a5adb5;
 
-    --accent: #4ea1ff;
+    --accent: #e8b35b;
     --good: #35c46b;
-    --warn: #ffb020;
+    --warn: #e8b35b;
     --danger: #ff5d5d;
 
-    --shadow:
-        0 4px 12px rgba(0,0,0,0.25);
+    --instrument-font: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 
 *
@@ -35,62 +34,109 @@
 body
 {
     margin: 0;
-    padding: 24px;
+    padding: 36px 24px;
 
     background: var(--bg);
     color: var(--text);
 
     font-family:
-        Inter,
         system-ui,
         sans-serif;
+    line-height: 1.5;
 }
 
 .container
 {
-    max-width: 1200px;
+    max-width: 1120px;
     margin: 0 auto;
 }
 
 header
 {
-    margin-bottom: 32px;
+    margin-bottom: 40px;
+    padding: 0 0 24px;
+    border-bottom: 1px solid var(--card-border);
+}
+
+.panel-label
+{
+    margin-bottom: 12px;
+    color: var(--accent);
+    font-family: var(--instrument-font);
+    font-size: 0.75rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
 }
 
 h1
 {
     margin: 0;
-    font-size: 2rem;
-    font-weight: 700;
+    font-size: clamp(1.75rem, 4vw, 2.5rem);
+    font-weight: 600;
+    letter-spacing: -0.035em;
+    line-height: 1.2;
 }
 
 .subtitle
 {
     margin-top: 8px;
     color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+#connectionStatus
+{
+    display: inline-block;
+    max-width: 100%;
+    margin-top: 20px;
+    padding: 6px 12px;
+    border: 1px solid var(--card-border);
+    border-left: 2px solid var(--accent);
+    background: var(--card);
+    font-family: var(--instrument-font);
+    font-size: 0.8rem;
+    overflow-wrap: anywhere;
 }
 
 .section
 {
-    margin-bottom: 32px;
+    margin-bottom: 36px;
 }
 
 .section-title
 {
+    display: flex;
+    align-items: center;
+    gap: 12px;
     margin-bottom: 16px;
 
-    font-size: 0.95rem;
+    font-size: 0.75rem;
     font-weight: 600;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
 
     color: var(--text-secondary);
 }
 
+.section-number
+{
+    color: var(--accent);
+    font-family: var(--instrument-font);
+    font-weight: 400;
+}
+
+.section-title::after
+{
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--card-border);
+}
+
 .grid
 {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 16px;
 }
 
@@ -99,48 +145,64 @@ h1
     background: var(--card);
     border: 1px solid var(--card-border);
 
-    border-radius: 16px;
+    border-radius: 3px;
+    padding: 24px;
+    min-width: 0;
+}
 
-    padding: 20px;
-
-    box-shadow: var(--shadow);
+.telemetry .card
+{
+    border-top: 2px solid var(--accent);
+    padding: 24px 24px 20px;
 }
 
 .metric-label
 {
-    font-size: 0.9rem;
+    font-size: 0.75rem;
     color: var(--text-secondary);
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
 }
 
 .metric-value
 {
-    margin-top: 12px;
+    margin-top: 20px;
 
-    font-size: 2rem;
-    font-weight: 700;
+    font-family: var(--instrument-font);
+    font-size: clamp(2rem, 4vw, 3.25rem);
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.04em;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
 }
 
 .metric-unit
 {
-    font-size: 1rem;
+    font-size: 0.9rem;
     color: var(--text-secondary);
+    letter-spacing: 0;
 }
 
 .status
 {
-    display: inline-flex;
+    display: flex;
     align-items: center;
     gap: 8px;
 
-    margin-top: 12px;
+    margin-top: 24px;
+    padding-top: 14px;
+    border-top: 1px solid var(--card-border);
 
-    font-size: 0.9rem;
+    font-family: var(--instrument-font);
+    font-size: 0.75rem;
 }
 
 .status-dot
 {
-    width: 10px;
-    height: 10px;
+    width: 7px;
+    height: 7px;
+    flex-shrink: 0;
 
     border-radius: 50%;
 }
@@ -166,22 +228,36 @@ h1
     justify-content: space-between;
     align-items: center;
 
-    padding: 14px 0;
+    gap: 20px;
+    padding: 18px 0;
 
-    border-bottom: 1px solid rgba(255,255,255,0.06);
+    border-bottom: 1px solid var(--card-border);
+    font-size: 0.9rem;
 }
 
 .control-row:last-child
 {
     border-bottom: none;
+    padding-bottom: 0;
+}
+
+.control-row:first-child
+{
+    padding-top: 0;
+}
+
+.control-row > label:not(.switch)
+{
+    cursor: pointer;
 }
 
 .switch
 {
     position: relative;
 
-    width: 54px;
-    height: 28px;
+    width: 64px;
+    height: 32px;
+    flex-shrink: 0;
 }
 
 .switch input
@@ -198,11 +274,12 @@ h1
 
     cursor: pointer;
 
-    background: #4b5563;
+    background: #30353a;
+    border: 1px solid #666f78;
 
-    border-radius: 999px;
+    border-radius: 2px;
 
-    transition: 0.2s;
+    transition: background-color 0.15s, border-color 0.15s;
 }
 
 .slider::before
@@ -211,70 +288,132 @@ h1
 
     position: absolute;
 
-    width: 22px;
-    height: 22px;
+    width: 24px;
+    height: 24px;
 
     left: 3px;
     top: 3px;
 
-    border-radius: 50%;
+    border-radius: 1px;
 
-    background: white;
+    background: #d5dae0;
 
-    transition: 0.2s;
+    transition: transform 0.15s;
+}
+
+.slider::after
+{
+    content: "0";
+    position: absolute;
+    right: 9px;
+    top: 4px;
+    color: var(--text-secondary);
+    font-family: var(--instrument-font);
+    font-size: 0.8rem;
 }
 
 input:checked + .slider
 {
     background: var(--accent);
+    border-color: var(--accent);
 }
 
 input:checked + .slider::before
 {
-    transform: translateX(26px);
+    transform: translateX(32px);
+    background: #16191c;
+}
+
+input:checked + .slider::after
+{
+    content: "I";
+    left: 10px;
+    right: auto;
+    color: #16191c;
+}
+
+input:focus-visible + .slider
+{
+    outline: 2px solid var(--accent);
+    outline-offset: 4px;
 }
 
 .log
 {
-    font-family: monospace;
+    font-family: var(--instrument-font);
 
-    font-size: 0.9rem;
+    font-size: 0.8rem;
 
-    color: #c9d4df;
+    color: #b8c1ca;
 
     max-height: 220px;
     overflow-y: auto;
 
-    line-height: 1.5;
+    line-height: 1.8;
+    overflow-wrap: anywhere;
+}
+
+.log-card
+{
+    background: #141719;
+}
+
+.log > div
+{
+    padding: 7px 0;
+    border-bottom: 1px solid var(--card-border);
+}
+
+.log > div:last-child
+{
+    border-bottom: none;
 }
 
 .footer
 {
-    margin-top: 48px;
+    margin-top: 40px;
+    padding-top: 16px;
+    border-top: 1px solid var(--card-border);
 
-    text-align: center;
+    text-align: left;
     color: var(--text-secondary);
 
-    font-size: 0.85rem;
+    font-family: var(--instrument-font);
+    font-size: 0.7rem;
+    letter-spacing: 0.04em;
 }
 
-@media (max-width: 600px)
+@media (max-width: 760px)
 {
     body
     {
-        padding: 16px;
+        padding: 24px 16px;
     }
 
-    .metric-value
+    .grid
     {
-        font-size: 1.6rem;
+        grid-template-columns: 1fr;
+    }
+
+    .telemetry .metric-value
+    {
+        font-size: 3rem;
     }
 }
 
 input:disabled + .slider
 {
-    cursor: default;
-    opacity: 0.45;
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+@media (prefers-reduced-motion: reduce)
+{
+    .slider,
+    .slider::before
+    {
+        transition: none;
+    }
 }
 
 </style>
@@ -285,16 +424,17 @@ input:disabled + .slider
 <div class="container">
 
     <header>
+        <div class="panel-label">Control panel / ESP32</div>
         <h1>Fish Tank Controller</h1>
         <div class="subtitle">
             Fish tank environment monitoring and actuator control
         </div>
-        <div id="connectionStatus" class="subtitle">Connecting...</div>
+        <div id="connectionStatus" class="subtitle" role="status">Connecting...</div>
     </header>
 
-    <section class="section">
+    <section class="section telemetry">
         <div class="section-title">
-            Telemetry
+            <span class="section-number">01</span> Telemetry
         </div>
 
         <div class="grid">
@@ -353,24 +493,24 @@ input:disabled + .slider
     <section class="section">
 
         <div class="section-title">
-            Actuator Control
+            <span class="section-number">02</span> Actuator Control
         </div>
 
         <div class="card">
 
             <div class="control-row">
-                <div>Manual Mode</div>
+                <label for="manualMode">Manual Mode</label>
                 <label class="switch">
                     <input type="checkbox" id="manualMode" disabled
                            onchange="setManualMode(this.checked)">
-                    <span class="slider"></span>
+                    <span class="slider" aria-hidden="true"></span>
                 </label>
             </div>
 
             <div class="control-row">
-                <div>
+                <label for="pumpFill">
                     Pump Fill
-                </div>
+                </label>
 
                 <label class="switch">
                     <input
@@ -380,14 +520,14 @@ input:disabled + .slider
                         onchange="setPump(1, this.checked)"
                     >
 
-                    <span class="slider"></span>
+                    <span class="slider" aria-hidden="true"></span>
                 </label>
             </div>
 
             <div class="control-row">
-                <div>
+                <label for="pumpDrain">
                     Pump Drain
-                </div>
+                </label>
 
                 <label class="switch">
                     <input
@@ -397,7 +537,7 @@ input:disabled + .slider
                         onchange="setPump(2, this.checked)"
                     >
 
-                    <span class="slider"></span>
+                    <span class="slider" aria-hidden="true"></span>
                 </label>
             </div>
 
@@ -407,7 +547,7 @@ input:disabled + .slider
     <section class="section">
 
         <div class="section-title">
-            System State
+            <span class="section-number">03</span> System State
         </div>
 
         <div class="grid">
@@ -452,10 +592,10 @@ input:disabled + .slider
     <section class="section">
 
         <div class="section-title">
-            Event Log
+            <span class="section-number">04</span> Event Log
         </div>
 
-        <div class="card">
+        <div class="card log-card">
             <div id="log" class="log">
                 Waiting for firmware status
             </div>
