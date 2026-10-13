@@ -1,5 +1,3 @@
-#include <stdio.h>
-
 #include "actuators/heater/heater.h"
 #include "actuators/pumps/pumps.h"
 #include "communication/wifi/wifi_manager.h"
@@ -7,6 +5,7 @@
 #include "core/control_task.h"
 #include "core/sensor_tasks.h"
 #include "esp_check.h"
+#include "esp_log.h"
 #include "sensors/level/level_sensor.h"
 #include "sensors/luminosity/luminosity_sensor.h"
 #include "sensors/temperature/temperature_sensor.h"
@@ -28,6 +27,8 @@
 #define DASHBOARD_WIFI_PASSWORD    "TankControl32"
 #define DASHBOARD_WIFI_CHANNEL     1
 
+static const char *TAG = "main";
+
 // Initialize the sensor drivers:
 static esp_err_t init_sensors(void) {
     temperature_sensor_config_t temperature_config = {
@@ -44,9 +45,9 @@ static esp_err_t init_sensors(void) {
         .adc_attenuation = ADC_ATTEN_DB_12
     };
 
-    ESP_RETURN_ON_ERROR(temperature_sensor_init(&temperature_config), "main", "failed to initialize temperature sensor");
-    ESP_RETURN_ON_ERROR(level_sensor_init(&level_config), "main", "failed to initialize level sensor");
-    ESP_RETURN_ON_ERROR(luminosity_sensor_init(&luminosity_config), "main", "failed to initialize luminosity sensor");
+    ESP_RETURN_ON_ERROR(temperature_sensor_init(&temperature_config), TAG, "failed to initialize temperature sensor");
+    ESP_RETURN_ON_ERROR(level_sensor_init(&level_config), TAG, "failed to initialize level sensor");
+    ESP_RETURN_ON_ERROR(luminosity_sensor_init(&luminosity_config), TAG, "failed to initialize luminosity sensor");
 
     return ESP_OK;
 }
@@ -63,8 +64,8 @@ static esp_err_t init_actuators(void) {
         .active_level = RELAY_ACTIVE_LEVEL
     };
 
-    ESP_RETURN_ON_ERROR(pumps_init(&pumps_config), "main", "failed to initialize pumps");
-    ESP_RETURN_ON_ERROR(heater_init(&heater_config), "main", "failed to initialize heater");
+    ESP_RETURN_ON_ERROR(pumps_init(&pumps_config), TAG, "failed to initialize pumps");
+    ESP_RETURN_ON_ERROR(heater_init(&heater_config), TAG, "failed to initialize heater");
 
     return ESP_OK;
 }
@@ -80,7 +81,7 @@ static void init_communication(void) {
     esp_err_t communication_result = wifi_manager_start(&wifi_config);
     if(communication_result == ESP_OK) communication_result = web_server_start();
     if(communication_result != ESP_OK) {
-        printf("[MAIN] Dashboard unavailable | error=%s | automatic control remains active\n", esp_err_to_name(communication_result));
+        ESP_LOGW(TAG, "Dashboard unavailable | error=%s | automatic control remains active", esp_err_to_name(communication_result));
     }
 }
 

@@ -17,8 +17,8 @@ esp_err_t luminosity_sensor_init(const luminosity_sensor_config_t *config) {
         .bitwidth = ADC_BITWIDTH_DEFAULT
     }; // Configure the ADC channel with the specified attenuation and default bit width
 
-    ESP_RETURN_ON_ERROR(adc_oneshot_new_unit(&unit_config, &adc_handle), "luminosity_sensor", "falha ao criar ADC");
-    ESP_RETURN_ON_ERROR(adc_oneshot_config_channel(adc_handle, config->adc_channel, &channel_config), "luminosity_sensor", "falha ao configurar canal ADC");
+    ESP_RETURN_ON_ERROR(adc_oneshot_new_unit(&unit_config, &adc_handle), "luminosity_sensor", "failed to create ADC unit");
+    ESP_RETURN_ON_ERROR(adc_oneshot_config_channel(adc_handle, config->adc_channel, &channel_config), "luminosity_sensor", "failed to configure ADC channel");
     adc_channel = config->adc_channel;
 
     return ESP_OK;

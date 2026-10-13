@@ -1,9 +1,8 @@
 #include "control_task.h"
 
-#include <stdio.h>
-
 #include "core/sensor_events.h"
 #include "core/state_machine.h"
+#include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -21,6 +20,8 @@ typedef struct {
     control_command_t command;
     uint32_t id;
 } queued_command_t;
+
+static const char *TAG = "control_task";
 
 static QueueHandle_t command_queue;
 static SemaphoreHandle_t status_mutex;
@@ -75,34 +76,34 @@ static void control_task(void *arg) {
     queued_command_t request;
 
     if(state_machine_init(&state_machine) != ESP_OK) {
-        printf("[CONTROL] Failed to initialize state machine\n");
+        ESP_LOGE(TAG, "Failed to initialize state machine");
     }
 
-    printf("[CONTROL] Control task started and waiting for sensor events\n");
+    ESP_LOGI(TAG, "Control task started and waiting for sensor events");
     publish_status(&state_machine, &status);
 
     while(1) {
         BaseType_t event_received = xQueueReceive(sensor_queue, &event, pdMS_TO_TICKS(CONTROL_QUEUE_WAIT_MS));
         if(state_machine_check_operation_timeout(&state_machine, esp_timer_get_time()) != ESP_OK) {
-            printf("[CONTROL] Failed to shut down an expired operation\n");
+            ESP_LOGE(TAG, "Failed to shut down an expired operation");
         }
 
         if(event_received == pdTRUE) {
             record_sensor_update(&status, event.type);
-            printf("[CONTROL] Received sensor event | type=%d valid=%s\n", event.type, event.valid ? "true" : "false");
+            ESP_LOGD(TAG, "Received sensor event | type=%d valid=%s", event.type, event.valid ? "true" : "false");
 
             if(state_machine_process_sensor_event(&state_machine, &event) != ESP_OK) {
-                printf("[CONTROL] State machine failed to process event | type=%d\n", event.type);
+                ESP_LOGE(TAG, "State machine failed to process event | type=%d", event.type);
             }
         }
         else if(state_machine_retry_shutdown(&state_machine) != ESP_OK) {
-            printf("[CONTROL] Failed to retry actuator shutdown\n");
+            ESP_LOGE(TAG, "Failed to retry actuator shutdown");
         }
         for(int count = 0; count < COMMANDS_PER_ITERATION; count++) {
             if(xQueueReceive(command_queue, &request, 0) != pdTRUE) break;
             status.last_command_result = state_machine_process_command(&state_machine, &request.command);
             status.last_command_id = request.id;
-            printf("[CONTROL] Command %lu processed | result=%s\n", (unsigned long)request.id, esp_err_to_name(status.last_command_result));
+            ESP_LOGI(TAG, "Command %lu processed | result=%s", (unsigned long)request.id, esp_err_to_name(status.last_command_result));
         }
         publish_status(&state_machine, &status);
     }

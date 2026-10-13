@@ -2,11 +2,11 @@
 
 #include <stdbool.h>
 #include <math.h>
-#include <stdio.h>
 
 #include "actuators/heater/heater.h"
 #include "actuators/pumps/pumps.h"
 #include "esp_check.h"
+#include "esp_log.h"
 #include "esp_timer.h"
 
 #define LEVEL_EMPTY_DISTANCE_CM         25.0f
@@ -17,6 +17,8 @@
 #define FILLING_TIMEOUT_US               300000000LL
 #define DRAINING_TIMEOUT_US              300000000LL
 #define HEATING_TIMEOUT_US               3600000000LL
+
+static const char *TAG = "state_machine";
 
 // Return readable text for a system state:
 const char *state_machine_state_to_string(system_state_t state) {
@@ -38,12 +40,13 @@ const char *state_machine_state_to_string(system_state_t state) {
     return "UNKNOWN";
 }
 
-// Print a state transition when the operating state changes:
+// Log a state transition when the operating state changes:
 static void set_state(state_machine_t *machine, system_state_t next_state, const char *reason) {
     if(machine->state == next_state) return;
 
-    printf(
-        "[STATE] Transition: %s -> %s | reason: %s\n",
+    ESP_LOGI(
+        TAG,
+        "Transition: %s -> %s | reason: %s",
         state_machine_state_to_string(machine->state),
         state_machine_state_to_string(next_state),
         reason
@@ -110,8 +113,9 @@ static esp_err_t apply_outputs_for_state(state_machine_t *machine) {
             break;
     }
 
-    printf(
-        "[ACTUATOR] Requested output | fill_pump=%s drain_pump=%s heater=%s\n",
+    ESP_LOGD(
+        TAG,
+        "Requested output | fill_pump=%s drain_pump=%s heater=%s",
         fill_enabled ? "ON" : "OFF",
         drain_enabled ? "ON" : "OFF",
         heater_enabled ? "ON" : "OFF"
@@ -120,14 +124,14 @@ static esp_err_t apply_outputs_for_state(state_machine_t *machine) {
     if(!fill_enabled && !drain_enabled && !heater_enabled) return shutdown_outputs(machine);
 
     // Disable incompatible outputs before enabling the requested actuator:
-    if(!heater_enabled) ESP_RETURN_ON_ERROR(set_heater_output(machine, false), "state_machine", "failed to disable heater");
-    if(!fill_enabled) ESP_RETURN_ON_ERROR(set_pump_output(machine, PUMP_FILL, false), "state_machine", "failed to disable fill pump");
-    if(!drain_enabled) ESP_RETURN_ON_ERROR(set_pump_output(machine, PUMP_DRAIN, false), "state_machine", "failed to disable drain pump");
+    if(!heater_enabled) ESP_RETURN_ON_ERROR(set_heater_output(machine, false), TAG, "failed to disable heater");
+    if(!fill_enabled) ESP_RETURN_ON_ERROR(set_pump_output(machine, PUMP_FILL, false), TAG, "failed to disable fill pump");
+    if(!drain_enabled) ESP_RETURN_ON_ERROR(set_pump_output(machine, PUMP_DRAIN, false), TAG, "failed to disable drain pump");
 
     // Enable the requested actuator only after every required shutdown succeeds:
-    if(fill_enabled) ESP_RETURN_ON_ERROR(set_pump_output(machine, PUMP_FILL, true), "state_machine", "failed to enable fill pump");
-    if(drain_enabled) ESP_RETURN_ON_ERROR(set_pump_output(machine, PUMP_DRAIN, true), "state_machine", "failed to enable drain pump");
-    if(heater_enabled) ESP_RETURN_ON_ERROR(set_heater_output(machine, true), "state_machine", "failed to enable heater");
+    if(fill_enabled) ESP_RETURN_ON_ERROR(set_pump_output(machine, PUMP_FILL, true), TAG, "failed to enable fill pump");
+    if(drain_enabled) ESP_RETURN_ON_ERROR(set_pump_output(machine, PUMP_DRAIN, true), TAG, "failed to enable drain pump");
+    if(heater_enabled) ESP_RETURN_ON_ERROR(set_heater_output(machine, true), TAG, "failed to enable heater");
 
     return ESP_OK;
 }
@@ -155,8 +159,9 @@ static void update_sensor_context(state_machine_t *machine, const sensor_event_t
             machine->temperature_received = true;
             machine->temperature_valid = event->valid;
             if(event->valid) machine->temperature_c = event->value.temperature_c;
-            printf(
-                "[STATE] Sensor update | temperature valid=%s value=%.2f C\n",
+            ESP_LOGD(
+                TAG,
+                "Sensor update | temperature valid=%s value=%.2f C",
                 event->valid ? "true" : "false",
                 event->valid ? event->value.temperature_c : machine->temperature_c
             );
@@ -165,8 +170,9 @@ static void update_sensor_context(state_machine_t *machine, const sensor_event_t
             machine->level_received = true;
             machine->level_valid = event->valid;
             if(event->valid) machine->level_cm = event->value.level_cm;
-            printf(
-                "[STATE] Sensor update | level valid=%s value=%.2f cm\n",
+            ESP_LOGD(
+                TAG,
+                "Sensor update | level valid=%s value=%.2f cm",
                 event->valid ? "true" : "false",
                 event->valid ? event->value.level_cm : machine->level_cm
             );
@@ -175,8 +181,9 @@ static void update_sensor_context(state_machine_t *machine, const sensor_event_t
             machine->luminosity_received = true;
             machine->luminosity_valid = event->valid;
             if(event->valid) machine->luminosity_raw = event->value.luminosity_raw;
-            printf(
-                "[STATE] Sensor update | luminosity valid=%s value=%d\n",
+            ESP_LOGD(
+                TAG,
+                "Sensor update | luminosity valid=%s value=%d",
                 event->valid ? "true" : "false",
                 event->valid ? event->value.luminosity_raw : machine->luminosity_raw
             );
@@ -202,7 +209,7 @@ static void handle_idle_state(state_machine_t *machine) {
     }
 
     if(!has_required_sensor_data(machine)) {
-        printf("[STATE] Staying in IDLE | waiting for first temperature and level readings\n");
+        ESP_LOGD(TAG, "Staying in IDLE | waiting for first temperature and level readings");
         return;
     }
 
@@ -221,7 +228,7 @@ static void handle_idle_state(state_machine_t *machine) {
         return;
     }
 
-    printf("[STATE] Staying in IDLE | readings inside automatic limits\n");
+    ESP_LOGD(TAG, "Staying in IDLE | readings inside automatic limits");
 }
 
 // Evaluate the filling state transitions:
@@ -236,7 +243,7 @@ static void handle_filling_state(state_machine_t *machine) {
         return;
     }
 
-    printf("[STATE] Staying in FILLING | level distance %.2f cm above target %.2f cm\n", machine->level_cm, LEVEL_TARGET_DISTANCE_CM);
+    ESP_LOGD(TAG, "Staying in FILLING | level distance %.2f cm above target %.2f cm", machine->level_cm, LEVEL_TARGET_DISTANCE_CM);
 }
 
 // Evaluate the draining state transitions:
@@ -251,7 +258,7 @@ static void handle_draining_state(state_machine_t *machine) {
         return;
     }
 
-    printf("[STATE] Staying in DRAINING | level distance %.2f cm below target %.2f cm\n", machine->level_cm, LEVEL_TARGET_DISTANCE_CM);
+    ESP_LOGD(TAG, "Staying in DRAINING | level distance %.2f cm below target %.2f cm", machine->level_cm, LEVEL_TARGET_DISTANCE_CM);
 }
 
 // Evaluate the heating state transitions:
@@ -272,7 +279,7 @@ static void handle_heating_state(state_machine_t *machine) {
         return;
     }
 
-    printf("[STATE] Staying in HEATING | temperature %.2f C below target %.2f C\n", machine->temperature_c, TEMPERATURE_TARGET_C);
+    ESP_LOGD(TAG, "Staying in HEATING | temperature %.2f C below target %.2f C", machine->temperature_c, TEMPERATURE_TARGET_C);
 }
 
 // Evaluate the manual state transitions:
@@ -286,24 +293,24 @@ static void handle_manual_state(state_machine_t *machine) {
        (machine->manual_pump == MANUAL_PUMP_DRAIN && machine->level_cm >= LEVEL_EMPTY_DISTANCE_CM)) {
         machine->manual_pump = MANUAL_PUMP_OFF;
         machine->operation_started_us = 0;
-        printf("[STATE] Manual pump stopped at the water level limit\n");
+        ESP_LOGW(TAG, "Manual pump stopped at the water level limit");
     }
 }
 
 // Evaluate the error state transitions:
 static void handle_error_state(state_machine_t *machine) {
     if(machine->operation_timed_out) {
-        printf("[STATE] Staying in ERROR | operation timeout requires restart\n");
+        ESP_LOGE(TAG, "Staying in ERROR | operation timeout requires restart");
         return;
     }
 
     if(machine->actuator_fault) {
-        printf("[STATE] Staying in ERROR | waiting for actuator shutdown\n");
+        ESP_LOGE(TAG, "Staying in ERROR | waiting for actuator shutdown");
         return;
     }
 
     if(has_critical_sensor_fault(machine)) {
-        printf("[STATE] Staying in ERROR | waiting for critical sensors to recover\n");
+        ESP_LOGE(TAG, "Staying in ERROR | waiting for critical sensors to recover");
         return;
     }
 
@@ -312,7 +319,7 @@ static void handle_error_state(state_machine_t *machine) {
 
 // Evaluate the current state after a context update:
 static void evaluate_state(state_machine_t *machine) {
-    printf("[STATE] Evaluating state: %s\n", state_machine_state_to_string(machine->state));
+    ESP_LOGD(TAG, "Evaluating state: %s", state_machine_state_to_string(machine->state));
 
     switch(machine->state) {
         case SYSTEM_STATE_IDLE:
@@ -358,7 +365,7 @@ esp_err_t state_machine_init(state_machine_t *machine) {
     machine->drain_enabled = false;
     machine->heater_enabled = false;
 
-    printf("[STATE] Initialized state machine | initial_state=%s\n", state_machine_state_to_string(machine->state));
+    ESP_LOGI(TAG, "Initialized state machine | initial_state=%s", state_machine_state_to_string(machine->state));
 
     return apply_state_outputs(machine);
 }
@@ -367,7 +374,7 @@ esp_err_t state_machine_init(state_machine_t *machine) {
 esp_err_t state_machine_process_sensor_event(state_machine_t *machine, const sensor_event_t *event) {
     if(machine == NULL || event == NULL) return ESP_ERR_INVALID_ARG;
 
-    printf("[STATE] Processing sensor event | type=%d current_state=%s\n", event->type, state_machine_state_to_string(machine->state));
+    ESP_LOGD(TAG, "Processing sensor event | type=%d current_state=%s", event->type, state_machine_state_to_string(machine->state));
     update_sensor_context(machine, event);
     if(machine->actuator_fault) return state_machine_retry_shutdown(machine);
     evaluate_state(machine);

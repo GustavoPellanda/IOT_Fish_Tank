@@ -29,9 +29,9 @@ esp_err_t pumps_init(const pumps_config_t *config) {
         .intr_type = GPIO_INTR_DISABLE
     };
 
-    ESP_RETURN_ON_ERROR(gpio_config(&gpio_config_data), "pumps", "falha ao configurar GPIO");
-    ESP_RETURN_ON_ERROR(pumps_set_state(PUMP_FILL, false), "pumps", "falha ao desligar bomba");
-    ESP_RETURN_ON_ERROR(pumps_set_state(PUMP_DRAIN, false), "pumps", "falha ao desligar bomba");
+    ESP_RETURN_ON_ERROR(gpio_config(&gpio_config_data), "pumps", "failed to configure GPIO");
+    ESP_RETURN_ON_ERROR(pumps_set_state(PUMP_FILL, false), "pumps", "failed to turn off pump");
+    ESP_RETURN_ON_ERROR(pumps_set_state(PUMP_DRAIN, false), "pumps", "failed to turn off pump");
 
     return ESP_OK;
 }

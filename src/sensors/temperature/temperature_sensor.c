@@ -141,13 +141,13 @@ esp_err_t temperature_sensor_read_celsius(float *temperature_c) {
     if(data_gpio == GPIO_NUM_NC) return ESP_ERR_INVALID_STATE;
 
     // Start a conversion before reading the DS18B20 scratchpad:
-    ESP_RETURN_ON_ERROR(one_wire_reset(), "temperature_sensor", "sensor ausente");
+    ESP_RETURN_ON_ERROR(one_wire_reset(), "temperature_sensor", "sensor not detected");
     one_wire_write_byte(DS18B20_CMD_SKIP_ROM);
     one_wire_write_byte(DS18B20_CMD_CONVERT_T);
     vTaskDelay(pdMS_TO_TICKS(DS18B20_CONVERSION_TIME_MS));
 
     // Read the scratchpad bytes that contain the raw temperature result:
-    ESP_RETURN_ON_ERROR(one_wire_reset(), "temperature_sensor", "sensor ausente");
+    ESP_RETURN_ON_ERROR(one_wire_reset(), "temperature_sensor", "sensor not detected");
     one_wire_write_byte(DS18B20_CMD_SKIP_ROM);
     one_wire_write_byte(DS18B20_CMD_READ_SCRATCHPAD);
 

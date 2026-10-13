@@ -43,8 +43,8 @@ esp_err_t level_sensor_init(const level_sensor_config_t *config) {
         .intr_type = GPIO_INTR_DISABLE
     };
 
-    ESP_RETURN_ON_ERROR(gpio_config(&trigger_config), "level_sensor", "falha ao configurar trigger");
-    ESP_RETURN_ON_ERROR(gpio_config(&echo_config), "level_sensor", "falha ao configurar echo");
+    ESP_RETURN_ON_ERROR(gpio_config(&trigger_config), "level_sensor", "failed to configure trigger GPIO");
+    ESP_RETURN_ON_ERROR(gpio_config(&echo_config), "level_sensor", "failed to configure echo GPIO");
     gpio_set_level(sensor_config.trigger_gpio, 0);
 
     return ESP_OK;
@@ -68,11 +68,11 @@ esp_err_t level_sensor_read_distance_cm(float *distance_cm) {
 
     // Measure the echo pulse width with a timeout on both edges:
     timeout_at_us = esp_timer_get_time() + sensor_config.timeout_us;
-    ESP_RETURN_ON_ERROR(wait_for_echo_level(1, timeout_at_us), "level_sensor", "timeout aguardando echo");
+    ESP_RETURN_ON_ERROR(wait_for_echo_level(1, timeout_at_us), "level_sensor", "timeout waiting for echo");
 
     pulse_start_us = esp_timer_get_time();
     timeout_at_us = pulse_start_us + sensor_config.timeout_us;
-    ESP_RETURN_ON_ERROR(wait_for_echo_level(0, timeout_at_us), "level_sensor", "timeout medindo echo");
+    ESP_RETURN_ON_ERROR(wait_for_echo_level(0, timeout_at_us), "level_sensor", "timeout measuring echo");
 
     pulse_end_us = esp_timer_get_time();
     *distance_cm = (float)(pulse_end_us - pulse_start_us) * SOUND_SPEED_CM_PER_US / 2.0f;

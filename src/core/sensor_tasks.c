@@ -1,8 +1,7 @@
 #include "sensor_tasks.h"
 
-#include <stdio.h>
-
 #include "core/sensor_events.h"
+#include "esp_log.h"
 #include "freertos/task.h"
 #include "sensors/level/level_sensor.h"
 #include "sensors/luminosity/luminosity_sensor.h"
@@ -15,10 +14,12 @@
 #define LEVEL_PERIOD_MS                 1000
 #define LUMINOSITY_PERIOD_MS            2000
 
+static const char *TAG = "sensor_tasks";
+
 // Publish a sensor event to the control task:
 static void publish_sensor_event(QueueHandle_t sensor_queue, const sensor_event_t *event) {
     if(xQueueSend(sensor_queue, event, 0) != pdTRUE) {
-        printf("[SENSOR] Control queue full, event dropped: %d\n", event->type);
+        ESP_LOGW(TAG, "Control queue full, event dropped: %d", event->type);
     }
 }
 

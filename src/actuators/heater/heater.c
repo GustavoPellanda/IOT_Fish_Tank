@@ -20,7 +20,7 @@ esp_err_t heater_init(const heater_config_t *config) {
         .intr_type = GPIO_INTR_DISABLE
     };
 
-    ESP_RETURN_ON_ERROR(gpio_config(&gpio_config_data), "heater", "falha ao configurar GPIO");
+    ESP_RETURN_ON_ERROR(gpio_config(&gpio_config_data), "heater", "failed to configure GPIO");
     return heater_set_enabled(false);
 }
 
